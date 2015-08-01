@@ -6,6 +6,9 @@ Created on Sat Aug  1 12:21:58 2015
 
 Collection of pyraf scripts primarily for reducing LIRIS spectra
 
+You need to launch pyraf in the iraf directory, and then cd to the directory containing un-reduced spectra.
+pyexecute this script, epar liris_reduce, and select desired reduction steps. 
+
 """
 import os
 from pyraf import iraf
