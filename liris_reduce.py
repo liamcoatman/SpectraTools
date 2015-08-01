@@ -10,6 +10,8 @@ You need to launch pyraf in the iraf directory, and then cd to the directory con
 pyexecute this script, epar liris_reduce, and select desired reduction steps. 
 
 """
+from __future__ import division
+
 import os
 from pyraf import iraf
 import shutil
