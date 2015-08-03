@@ -70,13 +70,17 @@ def get_boss_dr12_spec(name):
         warnings.simplefilter('ignore', AstropyWarning)
         dr12cat = Table.read('/data/lc585/SDSS/DR12Q.fits')
 
+
+    if name[:5] == 'SDSSJ':
+        name = name.replace('SDSSJ','')
+
     i = np.where(dr12cat['SDSS_NAME'] == name)[0]
 
     if len(i) != 0:
 
-        plate = dr12cat[i]['PLATE']
-        fiber = dr12cat[i]['FIBERID']
-        mjd = dr12cat[i]['MJD']
+        plate = dr12cat[i]['PLATE'].data[0]
+        fiber = dr12cat[i]['FIBERID'].data[0]
+        mjd = dr12cat[i]['MJD'].data[0]
 
         url = 'http://api.sdss3.org/spectrum?plate={0}&fiber={1:04d}&mjd={2}'.format(plate, fiber, mjd)
 
@@ -89,6 +93,7 @@ def get_boss_dr12_spec(name):
         dw = wavelength * (10**hdr['COEFF1'] - 1.0 )
         flux = np.array([j[0] for j in data ])
         err = np.sqrt( np.array([j[6] for j in data ])) # square root of sky
+
 
         return wavelength, dw, flux, err
 
