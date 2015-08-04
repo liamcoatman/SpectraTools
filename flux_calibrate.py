@@ -7,7 +7,7 @@ Created on Sat Aug  1 13:05:10 2015
 Inputs wavelength, flux, and optionally error of spectrum, wavelength and
 transmission for filter, and AB magnitude in that filter.
 
-Returns flux-normalised wavelength, flux and (optionally) error
+Returns normalised  flux and (optionally) error
 
 **Warning - this hasn't been tested**
 
@@ -45,9 +45,11 @@ def flux_calibrate(wavlen=None,
     delta = mag - ftrmag
 
     fnew = flux * 10.0**( -delta / 2.5 )
+
     if flux_sigma is not None:
         enew = flux_sigma * 10.0**( -delta / 2.5 )
         return fnew*(u.erg / u.cm / u.cm / u.s / u.AA), enew*(u.erg / u.cm / u.cm / u.s / u.AA)
+
     else:
         return fnew*(u.erg / u.cm / u.cm / u.s / u.AA)
 

@@ -68,14 +68,14 @@ def plot_fit(wav=None,
     # Add velocity shift
     vdat = vdat - velocity_shift
 
+
     xdat = wav[plot_region_inds]
     vdat = vdat[plot_region_inds]
     ydat = flux[plot_region_inds]
     yerr = err[plot_region_inds]
 
-    fig = plt.figure(figsize=(6,8))
+    fig = plt.figure(figsize=(6,10))
 
-    fig.suptitle(plot_title)
     fit = fig.add_subplot(3,1,1)
     fit.set_xticklabels( () )
     residuals = fig.add_subplot(3,1,2)
@@ -94,7 +94,10 @@ def plot_fit(wav=None,
     fr = wave2doppler(fitting_region, w0) - velocity_shift
 
     # Mask out regions
-    mask = (vdat.value < fr.value[0]) | (vdat.value > fr.value[1])
+    xdat_masking = np.arange(xdat.min().value, xdat.max().value, 0.05)*(u.AA)
+    vdat_masking = wave2doppler(xdat_masking, w0) - velocity_shift
+
+    mask = (vdat_masking.value < fr.value[0]) | (vdat_masking.value > fr.value[1])
 
 
     if maskout is not None:
@@ -102,26 +105,27 @@ def plot_fit(wav=None,
         if maskout.unit == (u.km/u.s):
 
             for item in maskout:
-                mask = mask | ((vdat.value > item.value[0]) & (vdat.value < item.value[1]))
+                mask = mask | ((vdat_masking.value > item.value[0]) & (vdat_masking.value < item.value[1]))
 
         elif maskout.unit == (u.AA):
 
             for item in maskout:
                 xmin = item.value[0] / (1.0 + z)
                 xmax = item.value[1] / (1.0 + z)
-                mask = mask | ((xdat.value > xmin) & (xdat.value < xmax))
+                mask = mask | ((xdat_masking.value > xmin) & (xdat_masking.value < xmax))
 
 
-    vdat1 = ma.array(vdat.value)
-    vdat1[mask] = ma.masked
+    vdat1_masking = ma.array(vdat_masking.value)
+    vdat1_masking[mask] = ma.masked
 
-    for item in ma.extras.flatnotmasked_contiguous(vdat1):
-        fit.axvspan(vdat1[item].min(), vdat1[item].max(), color=sns.color_palette('deep')[4], alpha=0.4)
-        residuals.axvspan(vdat1[item].min(), vdat1[item].max(), color=sns.color_palette('deep')[4], alpha=0.4)
+    for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
+        fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), color=sns.color_palette('deep')[4], alpha=0.4)
+        residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), color=sns.color_palette('deep')[4], alpha=0.4)
 
     line, = fit.plot(np.sort(vdat.value), resid(pars, np.sort(vdat.value), mod), color='black')
 
-    fit.set_xlim(vdat.min().value,vdat.max().value)
+    plotting_limits = wave2doppler(plot_region, w0) - velocity_shift
+    fit.set_xlim(plotting_limits[0].value, plotting_limits[1].value)
 
     residuals.errorbar(vdat.value, ydat - resid(pars, vdat.value, mod) , yerr=yerr, linestyle='', alpha=0.4)
 
@@ -131,14 +135,14 @@ def plot_fit(wav=None,
     residuals.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=12)
     residuals.set_ylabel("Residual")
 
-
-    plt.figtext(0.05,0.25,r"Converged with $\chi^2$ = " + str(out.chisqr) + ", DOF = " + str(out.nfree))
+    plt.figtext(0.05,0.28,plot_title,fontsize=10)
+    plt.figtext(0.05,0.25,r"Converged with $\chi^2$ = " + str(out.chisqr) + ", DOF = " + str(out.nfree), fontsize=10)
 
     figtxt = ''
     for i in pars.valuesdict():
         figtxt += i + ' = {0} \n'.format( float('{0:.4g}'.format( pars[i].value)))
 
-    plt.figtext(0.1,0.2,figtxt,fontsize=12,va='top')
+    plt.figtext(0.1,0.23,figtxt,fontsize=10,va='top')
 
     fig.tight_layout()
 
@@ -293,9 +297,10 @@ def fit_line(wav,
 
     for i in range(nLorentzians):
         pars['l{}_center'.format(i)].value = 0.0
-        pars['l{}_center'.format(i)].min = -5000.0
+        pars['l{}_center'.format(i)].min = -10000.0
         pars['l{}_center'.format(i)].max = 5000.0
         pars['l{}_amplitude'.format(i)].min = 0.0
+        #pars['l{}_sigma'.format(i)].min = 1000.0
 
 
     out = minimize(resid,
@@ -329,7 +334,8 @@ def fit_line(wav,
                  velocity_shift=velocity_shift,
                  continuum_region=continuum_region,
                  fitting_region=fitting_region,
-                 plot_region=plot_region)
+                 plot_region=plot_region,
+                 plot_title=plot_title)
 
 
 #    return pars, mod, x_data, dw, y_data_cr, y_sigma
