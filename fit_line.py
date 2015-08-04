@@ -165,8 +165,8 @@ def fit_line(wav,
              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
              fitting_region=[6400,6800]*u.AA,
              plot_region=[6000,7000]*u.AA,
-             nGaussians=0,
-             nLorentzians=1,
+             nGaussians=1,
+             nLorentzians=0,
              maskout=None,
              verbose=True,
              plot=True,
@@ -324,6 +324,30 @@ def fit_line(wav,
     root1 = optimize.brentq(lambda x: integrand(x) - half_max, -5.0e4, 0.0)
     root2 = optimize.brentq(lambda x: integrand(x) - half_max, 0.0, 5.0e4)
     print 'FWHM: {}'.format(root2 - root1)
+
+    norm = integrate.quad(integrand, -np.inf, np.inf)[0]
+    xs = np.arange(-1.0e5, 1.0e5, 0.1)
+    cdf = np.cumsum(integrand(xs)/norm)
+
+    ub = xs[np.argmin( np.abs( cdf - 0.841))]
+    lb = xs[np.argmin( np.abs( cdf - 0.5 ))]
+
+    print ub - lb
+
+    # Make generator function
+    def accumu(lis):
+        total = 0
+        for x in lis:
+            total += x
+            yield total
+
+    cdf = lambda x: accumu(integrand(x))
+
+    root = optimize.brentq(lambda x: cdf(x) - 0.5, -5e5, 0.0)
+
+
+
+
 
     if verbose:
         print fit_report(pars)
