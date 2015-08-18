@@ -320,32 +320,44 @@ def fit_line(wav,
 
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
     func_center = optimize.fmin(lambda x: -integrand(x) , 0)[0]
+    print 'Peak: {}'.format(func_center)
+
     half_max = mod.eval(params=pars, x=func_center) / 2.0
+
     root1 = optimize.brentq(lambda x: integrand(x) - half_max, -5.0e4, 0.0)
     root2 = optimize.brentq(lambda x: integrand(x) - half_max, 0.0, 5.0e4)
+
     print 'FWHM: {}'.format(root2 - root1)
 
+    # This only works if its a Gaussian.
+    # Probably different defintion of sigma for Lorentzian
+
+
     norm = integrate.quad(integrand, -np.inf, np.inf)[0]
-    xs = np.arange(-1.0e5, 1.0e5, 0.1)
+
+    xs = np.arange(-1.0e6, 1.0e6, 1)
     cdf = np.cumsum(integrand(xs)/norm)
 
-    ub = xs[np.argmin( np.abs( cdf - 0.841))]
-    lb = xs[np.argmin( np.abs( cdf - 0.5 ))]
+    md = xs[np.argmin( np.abs( cdf - 0.5))]
+    print 'Median: {}'.format(md)
+#
+#    ub = xs[np.argmin( np.abs( cdf - 0.841))]
+#    lb = xs[np.argmin( np.abs( cdf - 0.5 ))]
+#
+#    print 'sigma: {}'.format(ub - lb)
 
-    print ub - lb
+    # Equivalent width
 
-    # Make generator function
-    def accumu(lis):
-        total = 0
-        for x in lis:
-            total += x
-            yield total
-
-    cdf = lambda x: accumu(integrand(x))
-
-    root = optimize.brentq(lambda x: cdf(x) - 0.5, -5e5, 0.0)
+    xs = np.arange(fitting_region[0].value, fitting_region[1].value, 0.1)*u.AA # check doesn't depend too much on limits and spacing
+    vs = wave2doppler(xs,w0) - velocity_shift
+    flux_line = mod.eval(params=pars, x=vs.value)
+    flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs.value)
+    f = (flux_line + flux_bkgd) / flux_bkgd
 
 
+
+    eqw = (f[:-1] - 1.0) * np.diff(xs)
+    print 'EQW: {}'.format(np.nansum(eqw))
 
 
 
