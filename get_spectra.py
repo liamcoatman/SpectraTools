@@ -84,7 +84,7 @@ def get_boss_dr12_spec(name):
 
         url = 'http://api.sdss3.org/spectrum?plate={0}&fiber={1:04d}&mjd={2}'.format(plate, fiber, mjd)
 
-        #url = '/data/lc585/WHT_20150331/DR12_Spectra/SDSSJ132948.73+324124.4.fits'
+        url = '/data/lc585/WHT_20150331/DR12_Spectra/SDSSJ132948.73+324124.4.fits'
 
         hdulist = fits.open(url)
         data = hdulist[1].data

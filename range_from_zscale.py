@@ -26,7 +26,7 @@ Estimating ranges with the zscale algorithm
 """
 
 
-from future import __division__
+from __future__ import division
 
 import numpy as np
 import math

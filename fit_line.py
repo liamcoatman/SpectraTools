@@ -18,6 +18,8 @@ import numpy.ma as ma
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy import integrate, optimize
+import os
+import cPickle as pickle
 
 def resid(p,x,model,data=None,sigma=None):
 
@@ -40,6 +42,16 @@ def wave2doppler(w, w0):
     """
     w0_equiv = u.doppler_optical(w0)
     w_equiv = w.to(u.km/u.s, equivalencies=w0_equiv)
+
+    return w_equiv
+
+def doppler2wave(v, w0):
+
+    """
+    function uses the Doppler equivalency between wavelength and velocity
+    """
+    w0_equiv = u.doppler_optical(w0)
+    w_equiv = v.to(u.AA, equivalencies=w0_equiv)
 
     return w_equiv
 
@@ -132,6 +144,39 @@ def plot_fit(wav=None,
 
     residuals.set_xlim(fit.get_xlim())
 
+    # plot model components
+    i, j = 0, 0
+    for key, value in pars.valuesdict().iteritems():
+        if key.startswith('g'):
+            i += 1
+        if key.startswith('l'):
+            j += 1
+
+    ngaussians, nlorentzians = int(float(i) / 4.0), int(float(j) / 4.0)
+
+    if ngaussians > 1:
+
+        for i in range(ngaussians):
+            comp_mod = GaussianModel()
+            comp_p = comp_mod.make_params()
+
+            for key, v in comp_p.valuesdict().iteritems():
+                comp_p[key].value = pars['g' + str(i) + '_' + key].value
+
+            fit.plot( np.sort(vdat.value), comp_mod.eval(comp_p, x=np.sort(vdat.value)) )
+
+    if nlorentzians > 1:
+
+        for i in range(nlorentzians):
+            comp_mod = LorentzianModel()
+            comp_p = comp_mod.make_params()
+
+            for key, v in comp_p.valuesdict().iteritems():
+                comp_p[key].value = pars['l' + str(i) + '_' + key].value
+
+            fit.plot( np.sort(vdat.value), comp_mod.eval(comp_p, x=np.sort(vdat.value)) )
+
+
     fit.set_ylabel(r'F$_\lambda$', fontsize=12)
     residuals.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=12)
     residuals.set_ylabel("Residual")
@@ -165,13 +210,14 @@ def fit_line(wav,
              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
              fitting_region=[6400,6800]*u.AA,
              plot_region=[6000,7000]*u.AA,
-             nGaussians=1,
-             nLorentzians=0,
+             nGaussians=0,
+             nLorentzians=1,
              maskout=None,
              verbose=True,
              plot=True,
              plot_savefig='something.png',
-             plot_title=''):
+             plot_title='',
+             save_dir=None):
 
     """
     Velocity shift added to doppler shift to change zero point (can do if HW10
@@ -299,9 +345,9 @@ def fit_line(wav,
     for i in range(nLorentzians):
         pars['l{}_center'.format(i)].value = 0.0
         pars['l{}_center'.format(i)].min = -10000.0
-        pars['l{}_center'.format(i)].max = 5000.0
+        pars['l{}_center'.format(i)].max = 10000.0
         pars['l{}_amplitude'.format(i)].min = 0.0
-        #pars['l{}_sigma'.format(i)].min = 1000.0
+
 
 
     out = minimize(resid,
@@ -320,34 +366,44 @@ def fit_line(wav,
 
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
     func_center = optimize.fmin(lambda x: -integrand(x) , 0)[0]
+    print 'Peak: {}'.format(func_center)
+
     half_max = mod.eval(params=pars, x=func_center) / 2.0
+
     root1 = optimize.brentq(lambda x: integrand(x) - half_max, -5.0e4, 0.0)
     root2 = optimize.brentq(lambda x: integrand(x) - half_max, 0.0, 5.0e4)
+
     print 'FWHM: {}'.format(root2 - root1)
 
+    # This only works if its a Gaussian.
+    # Probably different defintion of sigma for Lorentzian
+
+
     norm = integrate.quad(integrand, -np.inf, np.inf)[0]
-    xs = np.arange(-1.0e5, 1.0e5, 0.1)
+
+    xs = np.arange(-1.0e6, 1.0e6, 1)
     cdf = np.cumsum(integrand(xs)/norm)
 
-    ub = xs[np.argmin( np.abs( cdf - 0.841))]
-    lb = xs[np.argmin( np.abs( cdf - 0.5 ))]
+    md = xs[np.argmin( np.abs( cdf - 0.5))]
+    print 'Median: {}'.format(md)
+#
+#    ub = xs[np.argmin( np.abs( cdf - 0.841))]
+#    lb = xs[np.argmin( np.abs( cdf - 0.5 ))]
+#
+#    print 'sigma: {}'.format(ub - lb)
 
-    print ub - lb
+    # Equivalent width
 
-    # Make generator function
-    def accumu(lis):
-        total = 0
-        for x in lis:
-            total += x
-            yield total
-
-    cdf = lambda x: accumu(integrand(x))
-
-    root = optimize.brentq(lambda x: cdf(x) - 0.5, -5e5, 0.0)
-
-
+    xs = np.arange(fitting_region[0].value, fitting_region[1].value, 0.1)*u.AA # check doesn't depend too much on limits and spacing
+    vs = wave2doppler(xs,w0) - velocity_shift
+    flux_line = mod.eval(params=pars, x=vs.value)
+    flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs.value)
+    f = (flux_line + flux_bkgd) / flux_bkgd
 
 
+
+    eqw = (f[:-1] - 1.0) * np.diff(xs)
+    print 'EQW: {}'.format(np.nansum(eqw))
 
     if verbose:
         print fit_report(pars)
@@ -372,7 +428,33 @@ def fit_line(wav,
                  plot_region=plot_region,
                  plot_title=plot_title)
 
-#    return pars, mod, x_data, dw, y_data_cr, y_sigma
+    if save_dir is not None:
+
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        param_file = os.path.join(save_dir, 'my_params.txt')
+        parfile = open(param_file, 'w')
+        pars.dump(parfile)
+        parfile.close()
+
+        vdat_file = os.path.join(save_dir, 'vdat.txt')
+        parfile = open(vdat_file, 'wb')
+        pickle.dump(vdat, parfile, -1)
+        parfile.close()
+
+        ydat_file = os.path.join(save_dir, 'ydat.txt')
+        parfile = open(ydat_file, 'wb')
+        pickle.dump(ydat, parfile, -1)
+        parfile.close()
+
+
+        yerr_file = os.path.join(save_dir, 'yerr.txt')
+        parfile = open(yerr_file, 'wb')
+        pickle.dump(yerr, parfile, -1)
+        parfile.close()
+
+
     return None
 
 ###Testing###
@@ -413,19 +495,37 @@ if __name__ == '__main__':
 #maskout=[[5107.3, 5138.2]]*u.AA,
 #maskout=[[-2064,-263]]*(u.km / u.s),
 
-    fit_line(wavelength,
-             flux,
-             err,
-             z=2.318977,
-             w0=6564.89*u.AA,
-             maskout=[[4735.8, 4757.8]]*(u.AA),
-             continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
-             plot_title='SDSSJ133916.88+151507.6',
-             plot_region=[6000,7000]*u.AA,
-             plot=True)
+    out = fit_line(wavelength,
+                   flux,
+                   err,
+                   z=2.318977,
+                   w0=6564.89*u.AA,
+                   maskout=[[4735.8, 4757.8]]*(u.AA),
+                   continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
+                   plot_title='SDSSJ133916.88+151507.6',
+                   plot_region=[6000,7000]*u.AA,
+                   plot=False,
+                   save_dir='/data/lc585/WHT_20150331/test/SDSSJ133916.88+151507.6/Ha/')
 
 
 
+#    parfile = open('my_params.txt', 'w')
+#    out['pars'].dump(parfile)
+#    parfile.close()
+#
+#    parfile = open('my_params.txt', 'r')
+#    params = Parameters()
+#    params.load(parfile)
+#    parfile.close()
+
+
+
+#
+#    p = Parameters()
+#    p.set
+
+#    with open('test.p', 'wb') as f:
+#        pickle.dump(out, f, -1)
 
 
 

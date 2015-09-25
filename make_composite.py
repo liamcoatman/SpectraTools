@@ -3,66 +3,50 @@
 Created on Sat Aug  1 14:49:50 2015
 
 @author: lc585
+
+Make composite spectra
+Specific only for LIRIS
+
 """
 
-def MakeComposite(spectra_list):
+from scipy.interpolate import interp1d
+from astropy.table import Table
+from get_spectra import get_liris_spec
+from flux_calibrate import flux_calibrate
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+import astropy.units as u
+from fit_line import fit_line
 
-    """
-    Give list of names to make composites from
-    """
+def MakeComposite():
 
-    fname = '/home/lc585/Dropbox/IoA/BlackHoleMasses/lineinfo_v3.dat'
+    fname = '/home/lc585/Dropbox/IoA/BlackHoleMasses/lineinfo_v4.dat'
     t = Table.read(fname,
                    format='ascii',
                    guess=False,
                    delimiter=',')
 
+
     spec, err2 = [], []
+    for n, z, m in zip(t['Name'], t['z_ICA'], t['Median_Ha']):
 
-    for name in spectra_list:
+        fname = os.path.join('/data/lc585/WHT_20150331/html',n,'dimcombLR+bkgd_v138.ms.fits')
+        wavelength, dw, flux, err = get_liris_spec(fname)
 
-        hdulist = fits.open( os.path.join('/data/lc585/WHT_20150331/html/',name,'dimcombLR+bkgd_v138.ms.fits') )
-        hdr = hdulist[0].header
-        data = hdulist[0].data
-        hdulist.close()
+        with open('/home/lc585/Dropbox/IoA/QSOSED/Model/Filter_Response/H.response','r') as f:
+            ftrwav, ftrtrans = np.loadtxt(f,unpack=True)
 
-        x_data, dw = getwave(hdr)
-        y_data = data[0,:,:].flatten()
-        y_sigma = data[-1,:,:].flatten()
-
-        i = np.where( t['Name'] == name )[0][0]
-
-        # Load filter responses into bp and calculate dlam.
-        with open('/home/lc585/Dropbox/IoA/WHT_Proposal_2015a/Iraf/Filter_Response/H.response','r') as f:
-            wavtmp, rsptmp = np.loadtxt(f,unpack=True)
-        dlam = (wavtmp[1] - wavtmp[0])
-        bp = np.ndarray(shape=(2,len(wavtmp)), dtype=float)
-        bp[0,:], bp[1,:] = wavtmp, rsptmp
-
-        sum1 = np.sum( bp[1] * (0.10893/(bp[0]**2)) * bp[0] * dlam)
-        sum2 = np.sum( bp[1] * bp[0] * dlam)
-        flxlam = sum1 / sum2
-        zromag = -2.5 * np.log10(flxlam)
-
-        # Now calculate magnitudes
-        spc = interp1d(x_data, y_data, bounds_error=False, fill_value=0.0)
-
-        sum1 = np.sum( bp[1] * spc(bp[0]) * bp[0] * dlam)
-        sum2 = np.sum( bp[1] * bp[0] * dlam)
-        flxlam = sum1 / sum2
-        ftrmag = (-2.5 * np.log10(flxlam)) - zromag
-
-        deltaH = t['HAB'][i] - ftrmag
-
-        y_data = y_data * 10.0**( -1.0 * deltaH / 2.5 )
-        y_sigma = y_sigma * 10.0**( -1.0 * deltaH / 2.5 )
+        flux, err = flux_calibrate(wavlen=wavelength, flux=flux, flux_sigma=err, ftrwav=ftrwav, ftrtrans=ftrtrans, mag=18.0)
 
         # Transform to quasar rest-frame
-        x_data = x_data / (1.0 + t[i]['z_HW10'])
-        x_data = x_data * (1.0 - t[i]['Ha_center']*(u.km/u.s) / c.to(u.km/u.s))
+        wavelength = wavelength / (1.0 + z)
+        from astropy.constants import c
+        wavelength = wavelength * (1.0 - m*(u.km/u.s) / c.to(u.km/u.s))
 
-        f1 = interp1d( x_data, y_data, bounds_error=False, fill_value=np.nan )
-        f2 = interp1d( x_data, y_sigma**2, bounds_error=False, fill_value=np.nan )
+        f1 = interp1d( wavelength, flux, bounds_error=False, fill_value=np.nan )
+        f2 = interp1d( wavelength, err**2, bounds_error=False, fill_value=np.nan )
+
 
         spec.append( f1( np.linspace(4000.0,7600.0,1168) ) )
         err2.append( f2( np.linspace(4000.0,7600.0,1168) ) )
@@ -73,76 +57,57 @@ def MakeComposite(spectra_list):
     meanspec, ns = np.zeros(1168), np.zeros(1168)
 
     for i in range(1168):
-        for j in range(len(spectra_list)):
+        for j in range(len(t)):
             if ~( np.isnan(spec[j,i]) | np.isnan(err2[j,i]) ):
                 ns[i] += 1.0
-                meanspec[i] += spec[j,i]
+                meanspec[i] += spec[j,i] / err2[j,i]
 
-    return np.linspace(4000.0,7600.0,1168), 1e17 * meanspec / ns
+    return np.linspace(4000.0,7600.0,1168), meanspec / ns / 1e18
 
-#fig, ax = plt.subplots()
-#
-#spectra_list = ['SDSSJ0738+2710',
-#                'SDSSJ0858+0152',
-#                'SDSSJ1236+1129',
-#                'SDSSJ1306+1510',
-#                'SDSSJ1336+1443',
-#                'SDSSJ1400+1205',
-#                'SDSSJ0806+2455',
-#                'SDSSJ1530+0623',
-#                'SDSSJ1618+2341']
-#
-#wav, flux = MakeComposite(spectra_list)
-#ax.plot(wav, flux, lw=1, label=r'Small H$\alpha$ FWHM')
-#
-#spectra_list = ['SDSSJ1104+0957',
-#                'SDSSJ0829+2423',
-#                'SDSSJ0743+2457',
-#                'SDSSJ0854+0317',
-#                'SDSSJ1246+0426',
-#                'SDSSJ1317+0806',
-#                'SDSSJ1329+3241',
-#                'SDSSJ1339+1515',
-#                'SDSSJ1634+3014']
-#
-#wav, flux = MakeComposite(spectra_list)
-#ax.plot(wav, flux, lw=1, label=r'Large H$\alpha$ FWHM')
-#
-#
-#ax.set_xlabel(r'Wavelength [$\AA$]')
-#ax.axvline(6564.614, color='red')
-#plt.legend()
-#plt.savefig('/home/lc585/Dropbox/IoA/BlackHoleMasses/large_small_fwhm_ha_composites.png')
-#
-#fig, axs  = plt.subplots(9,1, figsize=(6,40))
-#
-#
-#fname = '/home/lc585/Dropbox/IoA/BlackHoleMasses/lineinfo_v3.dat'
-#t = Table.read(fname,
-#               format='ascii',
-#               guess=False,
-#               delimiter=',')
-#
-#for j in range(9):
-#
-#    hdulist = fits.open( os.path.join('/data/lc585/WHT_20150331/html/',spectra_list[j],'dimcombLR+bkgd_v138.ms.fits') )
-#    hdr = hdulist[0].header
-#    data = hdulist[0].data
-#    hdulist.close()
-#
-#    x_data, dw = getwave(hdr)
-#    y_data = data[0,:,:].flatten()
-#    y_sigma = data[-1,:,:].flatten()
-#
-#    i = np.where( t['Name'] == spectra_list[j] )[0][0]
-#
-#    from astropy.constants import c
-#    x_data = x_data / (1.0 + t[i]['z_HW10'])
-#    x_data = x_data * (1.0 - t[i]['Ha_center']*(u.km/u.s) / c.to(u.km/u.s))
-#
-#
-#    axs[j].plot(x_data , y_data, lw=1)
-#    axs[j].axvline(6564.614, color='red')
-#    axs[j].set_xlim(6000,7000)
-#
-#plt.show()
+
+
+w, f = MakeComposite()
+fig, ax = plt.subplots()
+ax.plot(w, f)
+err = np.repeat(0.05,len(f))
+
+fit_line(w,
+         f,
+         err,
+         z=0.0,
+         w0=6564.89*u.AA,
+         continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
+         fitting_region=[6400,6800]*u.AA,
+         plot_region=[6000,7000]*u.AA,
+         nGaussians=0,
+         nLorentzians=2,
+         maskout=None,
+         verbose=True,
+         plot=True)
+
+#Peak: -74.326125
+#FWHM: 2338.39064098
+#Median: -107.0
+#EQW: 548.449953303 Angstrom
+
+#fit_line(w,
+#         f,
+#         err,
+#         z=0.0,
+#         w0=4862.68*u.AA,
+#         continuum_region=[[4550.,4700.]*u.AA,[5100.,5300.]*u.AA],
+#         fitting_region=[4700.,4900.0]*u.AA,
+#         plot_region=[4435,5535]*u.AA,
+#         nGaussians=0,
+#         nLorentzians=1,
+#         maskout=None,
+#         verbose=True,
+#         plot=True)
+
+#Peak: 206.9309375
+#FWHM: 2355.49451771
+#Median: 208.0
+#EQW: 42.3820996054 Angstrom
+
+
+plt.show()

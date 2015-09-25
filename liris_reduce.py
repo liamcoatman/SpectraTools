@@ -708,7 +708,7 @@ def wavelength_calibration(targetdir):
     print '\n' '\n' '\n'
     print 'Updating fits header...'
 
-    iraf.hedit.setParam('images','imcomb+bkgd.ms.fits')
+    iraf.hedit.setParam('images','imcomb+bkgd.ms.fits')  
     iraf.hedit.setParam('fields','REFSPEC1')
     iraf.hedit.setParam('value','aimcomb.fits') # should be wavelength calibrated?
     iraf.hedit.setParam('add','yes')
