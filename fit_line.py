@@ -400,8 +400,6 @@ def fit_line(wav,
     flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs.value)
     f = (flux_line + flux_bkgd) / flux_bkgd
 
-
-
     eqw = (f[:-1] - 1.0) * np.diff(xs)
     print 'EQW: {}'.format(np.nansum(eqw))
 

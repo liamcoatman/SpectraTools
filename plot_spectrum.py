@@ -20,16 +20,16 @@ Remove spectrum specific values
 
 """
 
-from get_wavelength import getwave
+from SpectraTools.get_wavelength import get_wavelength
 from astropy.io import fits
 import matplotlib.pyplot as plt
 import seaborn as sns
 from rebin import rebin
 
-def plot_spectrum(wav,
+def plot_spectrum(wav, 
                   flux,
                   er = None,
-                  2dspec = None,
+                  file2d = None,
                   z = 0.,
                   lheight = 1.0,
                   rest = False,
