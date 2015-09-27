@@ -230,9 +230,14 @@ def fit_line(wav,
 
     """
 
+    # Renormalise everything
+    flux = flux * 1e18
+    err = err * 1e18 
+
     # Transform to quasar rest-frame
     wav =  wav / (1.0 + z)
     wav = wav*u.AA
+
 
     # index is true in the region where we fit the continuum
     continuum = ((wav > continuum_region[0][0]) & \
@@ -278,12 +283,13 @@ def fit_line(wav,
     ydat = flux[fitting] - resid(bkgdpars, wav[fitting].value, bkgdmod)
     yerr = err[fitting]
 
+
+
     # Transform to doppler shift
     vdat = wave2doppler(xdat, w0)
 
     # Add velocity shift
     vdat = vdat - velocity_shift
-
 
     """
     Remember that this is to velocity shifted array
@@ -364,9 +370,11 @@ def fit_line(wav,
     # Check for single gaussian / lorentzian that this agrees with the analytic
     # result
 
+
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
     func_center = optimize.fmin(lambda x: -integrand(x) , 0)[0]
     print 'Peak: {}'.format(func_center)
+    # print 'Peak:' xs[np.argmax(integrand(xs))] # < much easier!  
 
     half_max = mod.eval(params=pars, x=func_center) / 2.0
 
@@ -378,30 +386,36 @@ def fit_line(wav,
     # This only works if its a Gaussian.
     # Probably different defintion of sigma for Lorentzian
 
-
-    norm = integrate.quad(integrand, -np.inf, np.inf)[0]
-
-    xs = np.arange(-1.0e6, 1.0e6, 1)
-    cdf = np.cumsum(integrand(xs)/norm)
+    dv = 1.0 
+    xs = np.arange(-1.e5, 1.e5, dv)     
+    norm = np.sum(integrand(xs) * dv)
+    pdf = integrand(xs) / norm
+    cdf = np.cumsum(pdf) 
 
     md = xs[np.argmin( np.abs( cdf - 0.5))]
     print 'Median: {}'.format(md)
-#
-#    ub = xs[np.argmin( np.abs( cdf - 0.841))]
-#    lb = xs[np.argmin( np.abs( cdf - 0.5 ))]
-#
-#    print 'sigma: {}'.format(ub - lb)
 
-    # Equivalent width
+    m = np.sum(xs * pdf * dv) 
+    print 'Mean: {}'.format(m)
 
-    xs = np.arange(fitting_region[0].value, fitting_region[1].value, 0.1)*u.AA # check doesn't depend too much on limits and spacing
-    vs = wave2doppler(xs,w0) - velocity_shift
-    flux_line = mod.eval(params=pars, x=vs.value)
-    flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs.value)
-    f = (flux_line + flux_bkgd) / flux_bkgd
+    v = np.sum( (xs-m)**2 * pdf * dv )
+    sd = np.sqrt(v)
+    print sd 
 
-    eqw = (f[:-1] - 1.0) * np.diff(xs)
-    print 'EQW: {}'.format(np.nansum(eqw))
+    # print np.sqrt(v) 
+
+    # print np.sum(pdf)
+
+    # # Equivalent width
+
+    # xs = np.arange(fitting_region[0].value, fitting_region[1].value, 0.1)*u.AA # check doesn't depend too much on limits and spacing
+    # vs = wave2doppler(xs,w0) - velocity_shift
+    # flux_line = mod.eval(params=pars, x=vs.value)
+    # flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs.value)
+    # f = (flux_line + flux_bkgd) / flux_bkgd
+
+    # eqw = (f[:-1] - 1.0) * np.diff(xs)
+    # print 'EQW: {}'.format(np.nansum(eqw))
 
     if verbose:
         print fit_report(pars)
