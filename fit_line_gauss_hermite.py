@@ -11,7 +11,7 @@ References: van der Marel & Franx (1993); Cappelari (2000)
 
 import numpy as np
 import astropy.units as u
-from lmfit import minimize, Parameters 
+from lmfit import minimize, Parameters, fit_report 
 from lmfit.models import PowerLawModel
 from lmfit.model import Model 
 import numpy.ma as ma
@@ -19,11 +19,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import os
 import cPickle as pickle
-from spectra.fit_line import wave2doppler, resid
+from spectra.fit_line import wave2doppler, resid, doppler2wave
 from scipy.interpolate import interp1d
 import math
+from scipy import integrate, optimize
 
-def resid(p,x,model,data=None,sigma=None):
+def resid(p, x, model, data=None, sigma=None):
 
         mod = model.eval( params=p, x=x )
 
@@ -37,9 +38,9 @@ def resid(p,x,model,data=None,sigma=None):
         else:
             return mod
 
-def gh_resid(p, x, data=None,sigma=None):
+def gh_resid(p, x, order, data=None, sigma=None):
 
-        mod = gausshermite(x, p)
+        mod = gausshermite(x, p, order)
 
         if data is not None:
             resids = mod - data
@@ -51,24 +52,42 @@ def gh_resid(p, x, data=None,sigma=None):
         else:
             return mod
 
-def gausshermite(x, p):
+def gausshermite(x, p, order):
 
     h0 = (p['amp0'].value/(np.sqrt(2*math.pi)*p['sig0'].value)) * np.exp(-(x-p['cen0'].value)**2 /(2*p['sig0'].value**2))
-	
-    h1 = np.sqrt(2.0) * x * (p['amp1'].value/(np.sqrt(2*math.pi)*p['sig1'].value)) * np.exp(-(x-p['cen1'].value)**2 /(2*p['sig1'].value**2))
-	
-    h2 = (2.0*x*x - 1.0) / np.sqrt(2.0) * (p['amp2'].value/(np.sqrt(2*math.pi)*p['sig2'].value)) * np.exp(-(x-p['cen2'].value)**2 /(2*p['sig2'].value**2))
 
-    h3 = x * (2.0*x*x - 3.0) / np.sqrt(3.0) * (p['amp3'].value/(np.sqrt(2*math.pi)*p['sig3'].value)) * np.exp(-(x-p['cen3'].value)**2 /(2*p['sig3'].value**2))
+    if order > 0:
+        h1 = np.sqrt(2.0) * x * (p['amp1'].value/(np.sqrt(2*math.pi)*p['sig1'].value)) * np.exp(-(x-p['cen1'].value)**2 /(2*p['sig1'].value**2))
 
-    h4 = (x*x*(4.0*x*x-12.0)+3.0) / (2.0*np.sqrt(6.0)) * (p['amp4'].value/(np.sqrt(2*math.pi)*p['sig4'].value)) * np.exp(-(x-p['cen4'].value)**2 /(2*p['sig4'].value**2))
-	
-    h5 = (x*(x*x*(4.0*x*x-20.0) + 15.0)) / (2.0*np.sqrt(15.0)) * (p['amp5'].value/(np.sqrt(2*math.pi)*p['sig5'].value)) * np.exp(-(x-p['cen5'].value)**2 /(2*p['sig5'].value**2))
-
-    h6 = (x*x*(x*x*(8.0*x*x-60.0) + 90.0) - 15.0) / (12.0*np.sqrt(5.0)) * (p['amp6'].value/(np.sqrt(2*math.pi)*p['sig6'].value)) * np.exp(-(x-p['cen6'].value)**2 /(2*p['sig6'].value**2))
-
-    return h1 + h2 + h3 + h4 + h5 + h6 
-
+    if order > 1:
+        h2 = (2.0*x*x - 1.0) / np.sqrt(2.0) * (p['amp2'].value/(np.sqrt(2*math.pi)*p['sig2'].value)) * np.exp(-(x-p['cen2'].value)**2 /(2*p['sig2'].value**2))
+        
+    if order > 2:
+        h3 = x * (2.0*x*x - 3.0) / np.sqrt(3.0) * (p['amp3'].value/(np.sqrt(2*math.pi)*p['sig3'].value)) * np.exp(-(x-p['cen3'].value)**2 /(2*p['sig3'].value**2))
+       
+    if order > 3:   
+        h4 = (x*x*(4.0*x*x-12.0)+3.0) / (2.0*np.sqrt(6.0)) * (p['amp4'].value/(np.sqrt(2*math.pi)*p['sig4'].value)) * np.exp(-(x-p['cen4'].value)**2 /(2*p['sig4'].value**2))
+       
+    if order > 4:
+        h5 = (x*(x*x*(4.0*x*x-20.0) + 15.0)) / (2.0*np.sqrt(15.0)) * (p['amp5'].value/(np.sqrt(2*math.pi)*p['sig5'].value)) * np.exp(-(x-p['cen5'].value)**2 /(2*p['sig5'].value**2))
+       
+    if order > 5:
+        h6 = (x*x*(x*x*(8.0*x*x-60.0) + 90.0) - 15.0) / (12.0*np.sqrt(5.0)) * (p['amp6'].value/(np.sqrt(2*math.pi)*p['sig6'].value)) * np.exp(-(x-p['cen6'].value)**2 /(2*p['sig6'].value**2))
+       
+    if order == 0:
+        return h0
+    if order == 1:
+        return h0 + h1 
+    if order == 2:
+        return h0 + h1 + h2 
+    if order == 3:
+        return h0 + h1 + h2 + h3 
+    if order == 4:
+        return h0 + h1 + h2 + h3 + h4  
+    if order == 5:
+        return h0 + h1 + h2 + h3 + h4 + h5  
+    if order == 6:
+        return h0 + h1 + h2 + h3 + h4 + h5 + h6                       
 
 def plot_fit(wav=None,
              flux=None,
@@ -80,20 +99,21 @@ def plot_fit(wav=None,
              maskout=None,
              z=0.0,
              w0=6564.89*u.AA,
-             velocity_shift=0.0*(u.km / u.s),
              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
              fitting_region=[6400,6800]*u.AA,
              plot_region=None):
 
 
     # plotting region
+    print plot_region 
+
+    if plot_region.unit == (u.km/u.s):
+        plot_region = doppler2wave(plot_region, w0)  
+    
     plot_region_inds = (wav > plot_region[0]) & (wav < plot_region[1])
 
     # Transform to doppler shift
     vdat = wave2doppler(wav, w0)
-
-    # Add velocity shift
-    vdat = vdat - velocity_shift
 
     xdat = wav[plot_region_inds]
     vdat = vdat[plot_region_inds]
@@ -106,11 +126,12 @@ def plot_fit(wav=None,
     fit.set_xticklabels( () )
     residuals = fig.add_subplot(2,1,2)
 
-    fit.scatter(vdat.value, ydat, alpha=0.4)
- 
+    fit.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.4)
+     
     # Mark continuum fitting region
-    blue_cont = wave2doppler(continuum_region[0], w0) - velocity_shift
-    red_cont = wave2doppler(continuum_region[1], w0) - velocity_shift
+ 
+    blue_cont = wave2doppler(continuum_region[0], w0)
+    red_cont = wave2doppler(continuum_region[1], w0)
    
     fit.axvspan(blue_cont.value[0], blue_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
     fit.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
@@ -119,11 +140,11 @@ def plot_fit(wav=None,
     residuals.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
 
     # Mark fitting region
-    fr = wave2doppler(fitting_region, w0) - velocity_shift
+    fr = wave2doppler(fitting_region, w0) 
 
     # Mask out regions
     xdat_masking = np.arange(xdat.min().value, xdat.max().value, 0.05)*(u.AA)
-    vdat_masking = wave2doppler(xdat_masking, w0) - velocity_shift
+    vdat_masking = wave2doppler(xdat_masking, w0)
 
     mask = (vdat_masking.value < fr.value[0]) | (vdat_masking.value > fr.value[1])
 
@@ -148,20 +169,19 @@ def plot_fit(wav=None,
 
     for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
         fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), color=sns.color_palette('deep')[4], alpha=0.4)
-        residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), color=sns.color_palette('deep')[4], alpha=0.4)
-
-    
+        residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), color=sns.color_palette('deep')[4], alpha=0.4)   
 
     line, = fit.plot(wav_mod, flux_mod, color='black')
 
-    plotting_limits = wave2doppler(plot_region, w0) - velocity_shift
+    plotting_limits = wave2doppler(plot_region, w0) 
     fit.set_xlim(plotting_limits[0].value, plotting_limits[1].value)
 
     f = interp1d(wav_mod, flux_mod, kind='cubic', bounds_error=False, fill_value=0.0)
+    
+
     residuals.errorbar(vdat.value, ydat - f(vdat) , yerr=yerr, linestyle='', alpha=0.4)
 
     residuals.set_xlim(fit.get_xlim())
-
 
     fit.set_ylabel(r'F$_\lambda$', fontsize=12)
     residuals.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=12)
@@ -188,14 +208,12 @@ def fit_line(wav,
              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
              fitting_region=[6400,6800]*u.AA,
              plot_region=[6000,7000]*u.AA,
-             nGaussians=6,
              maskout=None,
-             sigma_clip=False,
-             nGaussians_sigma_clip=5,
-             reject_sigma=0.6,
+             order=6,
              plot=True,
              plot_savefig='something.png',
              plot_title='',
+             verbose=True,
              save_dir=None):
 
     """
@@ -209,9 +227,19 @@ def fit_line(wav,
 
     """
 
+    # print 'Warning: Renormalising!'
+    # flux = flux * 1e18
+    # err = err * 1e18 
+
     # Transform to quasar rest-frame
     wav =  wav / (1.0 + z)
     wav = wav*u.AA
+
+    # Check if continuum is given in wavelength or doppler units 
+    if continuum_region[0].unit == (u.km/u.s):
+        continuum_region[0] = doppler2wave(continuum_region[0], w0)  
+    if continuum_region[1].unit == (u.km/u.s):
+        continuum_region[1] = doppler2wave(continuum_region[1], w0)  
 
     # index is true in the region where we fit the continuum
     continuum = ((wav > continuum_region[0][0]) & \
@@ -220,6 +248,9 @@ def fit_line(wav,
                  (wav < continuum_region[1][1]))
 
     # index of the region we want to fit
+    if fitting_region.unit == (u.km/u.s):
+        fitting_region = doppler2wave(fitting_region, w0)  
+    
     fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
 
 
@@ -236,6 +267,10 @@ def fit_line(wav,
                    bkgdpars,
                    args=(xdat, bkgdmod, ydat, yerr),
                    method='leastsq')
+
+    if verbose:
+        print fit_report(bkgdpars)
+  
 
     # subtract continuum, define region for fitting
     xdat = wav[fitting]
@@ -286,49 +321,52 @@ def fit_line(wav,
     sd = np.sqrt(v)  
 
     vs = np.linspace(vdat.min(), vdat.max(), 1000)
-   
+
     pars = Parameters() 
 
-    pars.add('amp0', value = 1.0) 
-    pars.add('sig0', value = 1.0) 
-    pars.add('cen0', value = 0.0) 
+    pars.add('amp0', value = 1.0, min=0.0) 
+    pars.add('sig0', value = 1.0, min=0.05) 
+    pars.add('cen0', value = 0.0, min=vdat.min().value/sd.value, max=vdat.max().value/sd.value) 
 
-    pars.add('amp1', value = 1.0) 
-    pars.add('sig1', value = 1.0) 
-    pars.add('cen1', value = 0.0) 
 
-    pars.add('amp2', value = 1.0) 
-    pars.add('sig2', value = 1.0) 
-    pars.add('cen2', value = 0.0) 
+    if order > 0: 
+        pars.add('amp1', value = 1.0, min=0.0) 
+        pars.add('sig1', value = 1.0, min=0.05) 
+        pars.add('cen1', value = 0.0, min=vdat.min().value/sd.value, max=vdat.max().value/sd.value) 
 
-    pars.add('amp3', value = 1.0) 
-    pars.add('sig3', value = 1.0) 
-    pars.add('cen3', value = 0.0) 
+    if order > 1:    
+        pars.add('amp2', value = 1.0, min=0.0) 
+        pars.add('sig2', value = 1.0, min=0.05) 
+        pars.add('cen2', value = 0.0, min=vdat.min().value/sd.value, max=vdat.max().value/sd.value) 
+    
+    if order > 2:
+        pars.add('amp3', value = 1.0, min=0.0) 
+        pars.add('sig3', value = 1.0, min=0.05) 
+        pars.add('cen3', value = 0.0, min=vdat.min().value/sd.value, max=vdat.max().value/sd.value) 
+    
+    if order > 3:
+        pars.add('amp4', value = 1.0, min=0.0) 
+        pars.add('sig4', value = 1.0, min=0.05) 
+        pars.add('cen4', value = 0.0, min=vdat.min().value/sd.value, max=vdat.max().value/sd.value) 
+    
+    if order > 4:
+        pars.add('amp5', value = 1.0, min=0.0) 
+        pars.add('sig5', value = 1.0, min=0.05) 
+        pars.add('cen5', value = 0.0, min=vdat.min().value/sd.value, max=vdat.max().value/sd.value) 
+    
+    if order > 5:
+        pars.add('amp6', value = 1.0, min=0.0) 
+        pars.add('sig6', value = 1.0, min=0.05) 
+        pars.add('cen6', value = 0.0, min=vdat.min().value/sd.value, max=vdat.max().value/sd.value) 
 
-    pars.add('amp4', value = 1.0) 
-    pars.add('sig4', value = 1.0) 
-    pars.add('cen4', value = 0.0) 
-
-    pars.add('amp5', value = 1.0) 
-    pars.add('sig5', value = 1.0) 
-    pars.add('cen5', value = 0.0) 
-
-    pars.add('amp6', value = 1.0) 
-    pars.add('sig6', value = 1.0) 
-    pars.add('cen6', value = 0.0) 
-
-    pars.add('amp7', value = 1.0) 
-    pars.add('sig7', value = 1.0) 
-    pars.add('cen7', value = 0.0) 
-   
 
     out = minimize(gh_resid,
                    pars,
-                   args=(vdat.value/sd.value, ydat, yerr))
+                   args=(vdat.value/sd.value, order, ydat, yerr))
 
+    if verbose:
+        print fit_report(pars)
 
-    fig, ax = plt.subplots()
-    ax.scatter(vdat/sd, ydat)
 
     # Save results
 
@@ -358,48 +396,56 @@ def fit_line(wav,
         pickle.dump(yerr, parfile, -1)
         parfile.close()
 
-        
+    # Calculate FWHM of distribution
 
+    integrand = lambda x: gh_resid(pars, x, order)
+    
+    func_center = optimize.fmin(lambda x: -integrand(x) , 0)[0]
+    
+    print 'Peak: {}'.format(func_center * sd.value)
+    
+    half_max = integrand(func_center) / 2.0
 
-    # # Calculate full width at half maximum
-    # imax = np.argmax(mu_fit)
+    root1 = optimize.brentq(lambda x: integrand(x) - half_max, vdat.min().value, func_center)
+    root2 = optimize.brentq(lambda x: integrand(x) - half_max, func_center, vdat.max().value)
 
-    # halfmax = mu_fit[imax] / 2.0
-    # zpeak = vs[imax]
+    print 'FWHM: {}'.format((root2 - root1)* sd.value)
 
-    # i = 0
-    # while mu_fit[i] < halfmax:
-    #     i += 1
+    dv = 1.0   
 
-    # imid1 = i
+    xs = np.arange(vdat.min().value, vdat.max().value, dv) / sd.value      
+    
+    norm = np.sum(integrand(xs) * dv)
+    pdf = integrand(xs) / norm
+    cdf = np.cumsum(pdf) 
 
-    # i = len(vs) - 1
-    # while mu_fit[i] < halfmax:
-    #     i -= 1
+    md = xs[np.argmin( np.abs( cdf - 0.5))]
+    print 'Median: {}'.format(md * sd.value)
 
-    # imid2 = i
+    m = np.sum(xs * pdf * dv) 
+    print 'Mean: {}'.format(m * sd.value)
 
-    # print 'Peak: {}'.format(zpeak)
-    # print 'FWHM: {}'.format(vs[imid2] - vs[imid1])
+    """
+    This is working, but for Lorentzian the second moment is not defined. 
+    It dies off much less quickly than the Gaussian so the sigma is much 
+    larger. I therefore need to think of the range in which I calcualte 
+    sigma
+    """
 
-    # # Median
-
-    # cdf = np.cumsum(mu_fit/np.sum(mu_fit))
-    # md = vs[np.argmin( np.abs( cdf - 0.5))]
-    # print 'Median: {}'.format(md)
-
+    v = np.sum( (xs-m)**2 * pdf * dv )
+    sigma = np.sqrt(v)
+    print 'Second moment: {}'.format(sigma * sd.value) 
 
     if plot:
         plot_fit(wav=wav,
                  flux = flux - resid(bkgdpars, wav.value, bkgdmod),
                  err=err,
                  wav_mod=vs,
-                 flux_mod=gausshermite(vs.value/sd.value, pars),
+                 flux_mod=gausshermite(vs.value/sd.value, pars, order),
                  plot_savefig = plot_savefig,
                  maskout = maskout,
                  z=z,
                  w0=w0,
-                 velocity_shift=velocity_shift,
                  continuum_region=continuum_region,
                  fitting_region=fitting_region,
                  plot_region=plot_region,
@@ -420,14 +466,9 @@ if __name__ == '__main__':
              err,
              z=2.155473,
              w0=np.mean([1548.202,1550.774])*u.AA,
-             velocity_shift=0.0*(u.km / u.s),
              continuum_region=[[1445.,1465.]*u.AA,[1700.,1705.]*u.AA],
              fitting_region=[1460.,1580.]*u.AA,
              plot_region=[1440,1720]*u.AA,
-             nGaussians=8,
-             sigma_clip=None,
-             nGaussians_sigma_clip=4,
-             reject_sigma = 0.6,
              maskout=[[-15610,-11900],[-3360,-2145],[135,485],[770,1024]]*(u.km/u.s),
              plot=True,
              save_dir='/data/lc585/WHT_20150331/NewLineFits/SDSSJ123611.21+112921.6/gausshermite/CIV')
