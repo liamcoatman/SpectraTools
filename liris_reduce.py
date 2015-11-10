@@ -7,8 +7,11 @@ Created on Sat Aug  1 12:21:58 2015
 Collection of pyraf scripts primarily for reducing LIRIS spectra
 
 You need to launch pyraf in the iraf directory, and then cd to the directory containing un-reduced spectra.
-pyexecute this script, epar liris_reduce, and select desired reduction steps. 
+pyexecute this script, epar liris_reduce, and select desired reduction steps.
 
+See this for a good guide
+
+http://snova.fysik.su.se//private/near-z/spectroscopy/spectra.long.html
 """
 from __future__ import division
 
@@ -20,6 +23,7 @@ import glob
 import uuid
 from astropy.table import Table
 from astropy.io import fits
+import shutil
 
 homedir = os.path.expanduser("~")
 
@@ -277,6 +281,10 @@ def flat_correction(targetdir,flatdir):
         for name in outnames:
             f.write( name + '\n' )
 
+    iraf.noao(_doprint=0)
+    iraf.imred(_doprint=0)
+    iraf.ccdred(_doprint=0)
+
     iraf.ccdproc.setParam('images', '@' + os.path.join(targetdir, 'input.list') )
     iraf.ccdproc.setParam('flatcor','yes')
     iraf.ccdproc.setParam('flat', os.path.join(flatdir,'nFlat.fits') )
@@ -480,10 +488,53 @@ def image_combine(targetdir):
     iraf.imcombine.setParam('output',os.path.join(targetdir,'imcomb.fit') )
     iraf.imcombine.setParam('combine','average')
     iraf.imcombine.setParam('reject','sigclip')
-    iraf.imcombine.setParam('lsigma',5.0)
-    iraf.imcombine.setParam('hsigma',5.0)
+    iraf.imcombine.setParam('lsigma',3.0)
+    iraf.imcombine.setParam('hsigma',3.0)
 
     iraf.imcombine()
+
+    # Or, combine without background subtraction
+
+
+    if os.path.exists( os.path.join(targetdir,'imcomb+bkgd.fit')):
+        os.remove( os.path.join(targetdir, 'imcomb+bkgd.fit') )
+        print 'Removing file ' + os.path.join(targetdir, 'imcomb+bkgd.fit')
+
+    hdulist = fits.open( os.path.join( targetdir, 'imcomb.fit'))
+    data = hdulist[0].data
+    hdulist.close()
+
+    # import matplotlib.pyplot as plt
+    # from spectra.range_from_zscale import range_from_zscale
+    # fig, ax = plt.subplots()
+    # z1, z2, iteration = range_from_zscale(data)
+    # ax.imshow(data,cmap='gray',vmin=z1,vmax=z2)
+    # plt.gca().invert_yaxis()
+
+    data = np.concatenate( ( data[32:345,:], data[520:650,:], data[740:940,:]))
+
+    sigmaspec = np.std( data, axis = 0)
+
+    # fig, ax = plt.subplots()
+    # ax.plot( sigmaspec, lw=1 )
+
+    # Convert sky from adu to electron
+    skyspec = (4 * sigmaspec)**2
+    sky_adu = skyspec / 4.0
+
+    # add to each pixel
+
+    hdulist = fits.open( os.path.join( targetdir, 'imcomb.fit'))
+    data = hdulist[0].data
+    hdulist.close()
+
+    sky_adu = np.repeat(sky_adu, np.shape(data)[0] ).reshape( np.shape(data)[::-1] ).T
+
+    data = data + sky_adu
+
+    hdu = fits.PrimaryHDU(data)
+    hdu.writeto( os.path.join( targetdir, 'imcomb+bkgd.fit') )
+
 
     return None
 
@@ -515,16 +566,13 @@ def extract_spectrum(targetdir,
     basedir = '/data/lc585/WHT_20150331/OBS/'
     targetdir = os.path.join(basedir,targetdir,'Reduced')
 
-
     print 'Target directory is ' + targetdir
     print 'Extracting spectrum...'
 
 
-    if os.path.exists( os.path.join(targetdir, 'imcomb+bkgd.ms.fits') ):
-        os.remove( os.path.join( targetdir, 'imcomb+bkgd.ms.fits') )
-        print 'Removing file ' + os.path.join( targetdir, 'imcomb+bkgd.ms.fits')
-
-
+    if os.path.exists( os.path.join(targetdir, 'imcomb.ms.fits') ):
+        os.remove( os.path.join( targetdir, 'imcomb.ms.fits') )
+        print 'Removing file ' + os.path.join( targetdir, 'imcomb.ms.fits')
 
     # If can't fit trace use trace from nearby object
 
@@ -543,8 +591,16 @@ def extract_spectrum(targetdir,
 
         print 'Using trace from reference spectra ' + refspec
 
+    # Since frame is averaged I think we need to scale down read nosie but gain will stay the same.
+    names = []
+    for n in os.listdir(targetdir):
+        if (n.endswith('.fit')) & (n.startswith('r')):
+            names.append(n)
+
+    nframes = float(len(names))
+
     # Doesn't seem to work if I give it absolute path to input!
-    iraf.apall.setParam('input','imcomb+bkgd.fit') # List of input images
+    iraf.apall.setParam('input','imcomb.fit') # List of input images
     iraf.apall.setParam('output','') # List of output spectra
     iraf.apall.setParam('apertur','') # Apertures
     iraf.apall.setParam('format','multispec') # Extracted spectra format
@@ -572,7 +628,7 @@ def extract_spectrum(targetdir,
     iraf.apall.setParam('apidtab','') # Aperture ID table (optional)
 
                                 # DEFAULT BACKGROUND PARAMETERS
-
+    # Background is now a constant at each wavelength
     iraf.apall.setParam('b_funct','chebyshev') # Background function
     iraf.apall.setParam('b_order',1) # Background function order
     iraf.apall.setParam('b_sampl','-10:-6,6:10') # Background sample regions
@@ -618,7 +674,7 @@ def extract_spectrum(targetdir,
     iraf.apall.setParam('t_nlost',3) # Number of consecutive times profile is lost befo
     iraf.apall.setParam('t_funct','spline3') # Trace fitting function
     iraf.apall.setParam('t_order',2) # Trace fitting function order
-    iraf.apall.setParam('t_sampl','650:850') # Trace sample regions
+    iraf.apall.setParam('t_sampl','*') # Trace sample regions
     iraf.apall.setParam('t_naver',1) # Trace average or median
     iraf.apall.setParam('t_niter',2) # Trace rejection iterations
     iraf.apall.setParam('t_low_r',3.) # Trace lower rejection sigma
@@ -627,13 +683,14 @@ def extract_spectrum(targetdir,
 
                                 # EXTRACTION PARAMETERS
 
-    iraf.apall.setParam('backgro','median') # Background to subtract
+    iraf.apall.setParam('backgro','none') # Background to subtract
     iraf.apall.setParam('skybox',1) # Box car smoothing length for sky
     iraf.apall.setParam('weights','variance') # Extraction weights (none|variance)
     iraf.apall.setParam('pfit','fit1d') # Profile fitting type (fit1d|fit2d)
     iraf.apall.setParam('clean','yes') # Detect and replace bad pixels?
     iraf.apall.setParam('saturat',300000.) # Saturation level
-    iraf.apall.setParam('readnoi',17.) # Read out noise sigma (photons)
+    # iraf.apall.setParam('readnoi',17.0)
+    iraf.apall.setParam('readnoi',17./np.sqrt(nframes)) # Read out noise sigma (photons)
     iraf.apall.setParam('gain',4.) # Photon gain (photons/data number)
     iraf.apall.setParam('lsigma',4.) # Lower rejection threshold
     iraf.apall.setParam('usigma',4.) # Upper rejection threshold
@@ -641,8 +698,6 @@ def extract_spectrum(targetdir,
     iraf.apall.setParam('mode','q') # h = hidden, q = query, l = learn
 
     iraf.apall()
-
-
 
     # Now extract arc through same aperture for wavelength calibration
 
@@ -658,13 +713,73 @@ def extract_spectrum(targetdir,
 
     iraf.apall.setParam('input', arcspec)
     iraf.apall.setParam('output', 'aimcomb')
-    iraf.apall.setParam('references', 'imcomb+bkgd.fit' )
+    iraf.apall.setParam('references', 'imcomb.fit' )
     iraf.apall.setParam('recenter','no')
     iraf.apall.setParam('trace','no')
     iraf.apall.setParam('background','no')
     iraf.apall.setParam('interactive','no')
 
     iraf.apall()
+
+
+    if os.path.exists( os.path.join(targetdir, 'imcomb+bkgd.ms.fits') ):
+        os.remove( os.path.join( targetdir, 'imcomb+bkgd.ms.fits') )
+        print 'Removing file ' + os.path.join( targetdir, 'imcomb+bkgd.ms.fits')
+
+
+    iraf.apall.setParam('input','imcomb+bkgd.fit') # List of input images
+    iraf.apall.setParam('output','') # List of output spectra
+    iraf.apall.setParam('referen','imcomb.fit') # List of aperture reference images
+
+    iraf.apall.setParam('interac','yes') # Run task interactively?
+    iraf.apall.setParam('find','yes') # Find apertures?
+    iraf.apall.setParam('recenter','no') # Recenter apertures?
+    iraf.apall.setParam('resize','no') # Resize apertures?
+    iraf.apall.setParam('edit','yes') # Edit apertures?
+    iraf.apall.setParam('trace','no') # Trace apertures?
+    iraf.apall.setParam('fittrac',interactive) # Fit the traced points interactively?
+    iraf.apall.setParam('extract','yes') # Extract spectra?
+    iraf.apall.setParam('extras','yes') # Extract sky, sigma, etc.?
+    iraf.apall.setParam('review','yes') # Review extractions?
+
+                                # DEFAULT BACKGROUND PARAMETERS
+    # Background is now a constant at each wavelength
+    iraf.apall.setParam('b_funct','chebyshev') # Background function
+    iraf.apall.setParam('b_order',1) # Background function order
+    iraf.apall.setParam('b_sampl','-10:-6,6:10') # Background sample regions
+    iraf.apall.setParam('b_naver',-3) # Background average or median
+    iraf.apall.setParam('b_niter',2) # Background rejection iterations
+    iraf.apall.setParam('b_low_r',3.) # Background lower rejection sigma
+    iraf.apall.setParam('b_high_',3.) # Background upper rejection sigma
+    iraf.apall.setParam('b_grow',0.) # Background rejection growing radius
+
+                                # EXTRACTION PARAMETERS
+
+    # before i wasn't dividing by the square root of the frames, but surely this must be true if I'm taking the average
+
+    iraf.apall.setParam('backgro','median') # Background to subtract
+    iraf.apall.setParam('skybox',1) # Box car smoothing length for sky
+    iraf.apall.setParam('weights','variance') # Extraction weights (none|variance)
+    iraf.apall.setParam('pfit','fit1d') # Profile fitting type (fit1d|fit2d)
+    iraf.apall.setParam('clean','yes') # Detect and replace bad pixels?
+    iraf.apall.setParam('saturat',300000.) # Saturation level
+    # iraf.apall.setParam('readnoi',17.0)
+    iraf.apall.setParam('readnoi',17.0/np.sqrt(nframes)) # Read out noise sigma (photons)
+    iraf.apall.setParam('gain',4.) # Photon gain (photons/data number)
+    iraf.apall.setParam('lsigma',4.) # Lower rejection threshold
+    iraf.apall.setParam('usigma',4.) # Upper rejection threshold
+    iraf.apall.setParam('nsubaps',1) # Number of subapertures per aperture
+
+    iraf.apall()
+
+    hdulist = fits.open(os.path.join(targetdir, 'imcomb+bkgd.ms.fits'))
+    sigma = hdulist[0].data[3,0,:]
+    hdulist.close()
+
+    hdulist = fits.open(os.path.join(targetdir, 'imcomb.ms.fits'), mode='update')
+    hdulist[0].data[2,0,:] = sigma
+    hdulist.flush()
+    hdulist.close()
 
     return None
 
@@ -708,7 +823,7 @@ def wavelength_calibration(targetdir):
     print '\n' '\n' '\n'
     print 'Updating fits header...'
 
-    iraf.hedit.setParam('images','imcomb+bkgd.ms.fits')  
+    iraf.hedit.setParam('images','imcomb.ms.fits')
     iraf.hedit.setParam('fields','REFSPEC1')
     iraf.hedit.setParam('value','aimcomb.fits') # should be wavelength calibrated?
     iraf.hedit.setParam('add','yes')
@@ -1033,6 +1148,7 @@ def liris_reduce(targetdir,
     goodflag = sort_frames(newdir)
 
     if lcpixmap == 'yes':
+
         liris_pixmap(newdir)
 
     if flatcorr == 'yes':
