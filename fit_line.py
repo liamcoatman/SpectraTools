@@ -21,6 +21,7 @@ import os
 import cPickle as pickle
 from scipy.stats import norm
 from scipy.ndimage.filters import median_filter
+from palettable.colorbrewer.qualitative import Set2_5
 
 def resid(p,x,model,data=None,sigma=None):
 
@@ -69,7 +70,8 @@ def plot_fit(wav=None,
              w0=6564.89*u.AA,
              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
              fitting_region=[6400,6800]*u.AA,
-             plot_region=None):
+             plot_region=None,
+             line_region=[-10000,10000]*(u.km/u.s)):
 
 
     # plotting region
@@ -83,14 +85,15 @@ def plot_fit(wav=None,
     ydat = flux[plot_region_inds]
     yerr = err[plot_region_inds]
 
+    plt.rc('axes', color_cycle=Set2_5.mpl_colors) 
     fig = plt.figure(figsize=(6,15))
 
     fit = fig.add_subplot(4,1,1)
     fit.set_xticklabels( () )
     residuals = fig.add_subplot(4,1,2)
 
-    fit.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.4)
-    # fit.plot(vdat.value, ydat)
+   
+    fit.scatter(vdat.value, ydat, edgecolor='None', s=15, alpha=0.9, facecolor='black')
 
     # Mark continuum fitting region
     # Doesn't make sense to transform to wave and then back to velocity but I'm being lazy.
@@ -112,15 +115,16 @@ def plot_fit(wav=None,
     # Region where equivalent width etc. calculated.
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
     func_center = optimize.fmin(lambda x: -integrand(x) , 0)[0]
-    fit.axvline(func_center-10000, color='black', linestyle='--')
-    fit.axvline(func_center+10000, color='black', linestyle='--')
+    
+    fit.axvline(line_region[0].value, color='black', linestyle='--')
+    fit.axvline(line_region[1].value, color='black', linestyle='--')
 
     # Mark fitting region
     fr = wave2doppler(fitting_region, w0)
 
     # set y axis scale
     ind_center = np.argmin(np.abs(vdat.value - func_center))
-    fit.set_ylim(-0.1*ydat[ind_center], 1.1*ydat[ind_center])
+    fit.set_ylim(-0.2*ydat[ind_center], 1.2*ydat[ind_center])
 
     # Mask out regions
     xdat_masking = np.arange(xdat.min().value, xdat.max().value, 0.05)*(u.AA)
@@ -145,7 +149,7 @@ def plot_fit(wav=None,
 
 
     vdat1_masking = ma.array(vdat_masking.value)
-    vdat1_masking[mask] = ma.masked
+    vdat1_masking[mask] = ma.masked 
 
     for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
         fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')
@@ -158,12 +162,12 @@ def plot_fit(wav=None,
 
     # residuals.errorbar(vdat.value, (ydat - resid(pars, vdat.value, mod)) / yerr, yerr=1, linestyle='', alpha=0.4)
     # residuals.plot(vdat.value, (ydat - resid(pars, vdat.value, mod)) / yerr, color='black', lw=1)
-    residuals.scatter(vdat.value, (ydat - resid(pars, vdat.value, mod)) / yerr, alpha=0.4, edgecolor='None')
-    residuals.plot(vdat.value, median_filter((ydat - resid(pars, vdat.value, mod)) / yerr, 3.0), color='black')
+    residuals.scatter(vdat.value, (ydat - resid(pars, vdat.value, mod)) / yerr, alpha=0.9, edgecolor='None', s=15, facecolor='black')
+    # residuals.plot(vdat.value, median_filter((ydat - resid(pars, vdat.value, mod)) / yerr, 3.0), color='black')
 
     residuals.axhline(0.0, color='black', linestyle='--')
 
-    residuals.set_ylim(-5,5)
+    residuals.set_ylim(-8,8)
     residuals.set_xlim(fit.get_xlim())
 
     # plot model components
@@ -199,29 +203,40 @@ def plot_fit(wav=None,
             fit.plot( np.sort(vdat.value), comp_mod.eval(comp_p, x=np.sort(vdat.value)) )
 
 
+
+
+    # plt.figtext(0.05,0.23,plot_title,fontsize=10)
+    # plt.figtext(0.05,0.20,r"Converged with $\chi^2$ = " + str(out.chisqr) + ", DOF = " + str(out.nfree), fontsize=10)
+
+    # figtxt = ''
+    # for i in pars.valuesdict():
+    #     figtxt += i + ' = {0} \n'.format( float('{0:.4g}'.format( pars[i].value)))
+
+    # plt.figtext(0.1,0.18,figtxt,fontsize=10,va='top')
+
+
+    eb = fig.add_subplot(4,1,3)
+    eb.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.5, color='grey')
+    eb.plot(np.sort(vdat.value), resid(pars, np.sort(vdat.value), mod), color='black', lw=2)
+    eb.set_xlim(fit.get_xlim())
+    eb.set_ylim(fit.get_ylim())
+
     fit.set_ylabel(r'F$_\lambda$', fontsize=12)
-    residuals.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=12)
+    eb.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=12)
+    eb.set_ylabel(r'F$_\lambda$', fontsize=12)
     residuals.set_ylabel("Residual")
 
-    plt.figtext(0.05,0.23,plot_title,fontsize=10)
-    plt.figtext(0.05,0.20,r"Converged with $\chi^2$ = " + str(out.chisqr) + ", DOF = " + str(out.nfree), fontsize=10)
-
-    figtxt = ''
-    for i in pars.valuesdict():
-        figtxt += i + ' = {0} \n'.format( float('{0:.4g}'.format( pars[i].value)))
-
-    plt.figtext(0.1,0.18,figtxt,fontsize=10,va='top')
-
     #######################################
+
     fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
     xdat = wav[fitting]
     vdat = wave2doppler(xdat, w0)
     ydat = flux[fitting]
     yerr = err[fitting]
-    hg = fig.add_subplot(4,1,3)
-    hg.hist((ydat - resid(pars, vdat.value, mod)) / yerr, bins=np.arange(-5,5,0.25), normed=True)
+    hg = fig.add_subplot(4,1,4)
+    hg.hist((ydat - resid(pars, vdat.value, mod)) / yerr, bins=np.arange(-5,5,0.25), normed=True, edgecolor='None')
     x_axis = np.arange(-5, 5, 0.001)
-    hg.plot(x_axis, norm.pdf(x_axis,0,1), color='black')
+    hg.plot(x_axis, norm.pdf(x_axis,0,1), color='black', lw=2)
 
     fig.tight_layout()
 
@@ -276,10 +291,10 @@ def fit_line(wav,
         continuum_region[1] = doppler2wave(continuum_region[1], w0)
 
     # index is true in the region where we fit the continuum
-    # continuum = ((wav > continuum_region[0][0]) & \
-    #              (wav < continuum_region[0][1])) | \
-    #              ((wav > continuum_region[1][0]) & \
-    #              (wav < continuum_region[1][1]))
+    continuum = ((wav > continuum_region[0][0]) & \
+                 (wav < continuum_region[0][1])) | \
+                 ((wav > continuum_region[1][0]) & \
+                 (wav < continuum_region[1][1]))
 
     # index of the region we want to fit
 
@@ -289,27 +304,26 @@ def fit_line(wav,
     fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
 
     # fit power-law to continuum region
+    # For civ we use median because more robust for small wavelength intervals. Ha we will fit to the data points since windows are much larger. 
 
-    # Fit to median
-    blue_inds = (wav > continuum_region[0][0]) & (wav < continuum_region[0][1])
-    red_inds = (wav > continuum_region[1][0]) & (wav < continuum_region[1][1])
-
-    xdat = np.array( [continuum_region[0].mean().value, continuum_region[1].mean().value] )
-    ydat = np.array( [np.median(flux[blue_inds]), np.median(flux[red_inds])] )
+    xdat_cont = wav[continuum]
+    ydat_cont = flux[continuum]
+    yerr_cont = err[continuum]
 
     bkgdmod = PowerLawModel()
     bkgdpars = bkgdmod.make_params()
     bkgdpars['exponent'].value = 1.0
     bkgdpars['amplitude'].value = 1.0
 
+    # don't know if its the best idea to minimize twice. 
     out = minimize(resid,
                    bkgdpars,
-                   args=(xdat, bkgdmod, ydat),
+                   args=(xdat_cont.value, bkgdmod, ydat_cont, yerr_cont),
                    method='nelder')
 
     out = minimize(resid,
                    bkgdpars,
-                   args=(xdat, bkgdmod, ydat),
+                   args=(xdat_cont.value, bkgdmod, ydat_cont, yerr_cont),
                    method='leastsq')
 
     if verbose:
@@ -423,173 +437,122 @@ def fit_line(wav,
 
 
 
-    # Calculate stats - tidy up this bit 
+    # Calculate stats 
+    integrand = lambda x: mod.eval(params=pars, x=np.array(x))
 
     # Calculate FWHM of distribution
-
-    # I think it would be more robust to calculate in line limits and just find arg max. 
-    # Write to file so I'm not copying and pasting fit results in to objects again
-
-    
-
-    integrand = lambda x: mod.eval(params=pars, x=np.array(x))
-    func_center = optimize.fmin(lambda x: -integrand(x) , 0)[0]
-
-    # print 'Peak: {}'.format(func_center)
-
-    half_max = mod.eval(params=pars, x=func_center) / 2.0
-
-    root1 = optimize.brentq(lambda x: integrand(x) - half_max, vdat.min().value, func_center)
-    root2 = optimize.brentq(lambda x: integrand(x) - half_max, func_center, vdat.max().value)
-
-    # print 'FWHM: {}'.format(root2 - root1)
-
     dv = 1.0 # i think if this was anything else might need to change intergration.
+    xs = np.arange(line_region.value[0], line_region[1].value, dv) 
 
-    # xs = np.arange(vdat.min().value, vdat.max().value, dv)
-    xs = np.arange(func_center - 10000.0, func_center + 10000.0, dv)
-
-    norm = integrate.quad(integrand, vdat.min().value, vdat.max().value)[0]
+    norm = np.sum(integrand(xs) * dv)
     pdf = integrand(xs) / norm
     cdf = np.cumsum(pdf)
     cdf_r = np.cumsum(pdf[::-1])[::-1] # reverse cumsum
 
+    func_center = xs[np.argmax(pdf)] 
+   
+    half_max = np.max(pdf) / 2.0
+
+    i = 0
+    while pdf[i] < half_max:
+        i+=1
+
+    root1 = xs[i]
+
+    i = 0
+    while pdf[-i] < half_max:
+        i+=1
+
+    root2 = xs[-i]
+
     md = xs[np.argmin( np.abs( cdf - 0.5))]
-    # print 'Median: {}'.format(md)
-
-    # Not sure this would work if median far from zero but probably would never happen.
-    p99 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.005))] - xs[np.argmin(np.abs(cdf - 0.005))])
-    p95 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.025))] - xs[np.argmin(np.abs(cdf - 0.025))])
-    p90 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.05))] - xs[np.argmin(np.abs(cdf - 0.05))])
-    p80 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.1))] - xs[np.argmin(np.abs(cdf - 0.1))])
-    p60 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.2))] - xs[np.argmin(np.abs(cdf - 0.2))])
-
-    # print '99%: {}'.format(p99)
-    # print '95%: {}'.format(p95)
-    # print '90%: {}'.format(p90)
-    # print '80%: {}'.format(p80)
-    # print '60%: {}'.format(p60)
 
     m = np.sum(xs * pdf * dv)
-    # print 'Mean: {}'.format(m)
-
-    """
-    This is working, but for Lorentzian the second moment is not defined.
-    It dies off much less quickly than the Gaussian so the sigma is much
-    larger. I therefore need to think of the range in which I calcualte
-    sigma
-    """
 
     v = np.sum( (xs-m)**2 * pdf * dv )
     sd = np.sqrt(v)
-    # print 'Second moment: {}'.format(sd)
-
-    # print 'chi-squred: {0}, dof: {1}'.format(out.chisqr, out.nfree)
-
-    # print plot_title
-    # print 'peak_ha = {0:.2f}*(u.km/u.s),'.format(func_center)
-    # print 'fwhm_ha = {0:.2f}*(u.km/u.s),'.format(root2 - root1)
-    # print 'median_ha = {0:.2f}*(u.km/u.s),'.format(md)
-    # print 'sigma_ha = {0:.2f}*(u.km/u.s),'.format(sd)
-    # print 'chired_ha = {0:.2f},'.format(out.redchi)
-
-    # print '{0} {1:.2f} {2:.2f} {3:.2f} {4} {5} {6} {7} {8} {9:.2f} {10:.2f}'.format(plot_title,
-    #                                                                                 func_center,
-    #                                                                                 root2 - root1,
-    #                                                                                 md,
-    #                                                                                 p99,
-    #                                                                                 p95,
-    #                                                                                 p90,
-    #                                                                                 p80,
-    #                                                                                 p60,
-    #                                                                                 m,
-    #                                                                                 sd)
-
-
 
     # Equivalent width
-    xs = np.arange(func_center - 10000.0, func_center + 10000.0, dv)
-    # xs = np.arange(vdat.min().value, vdat.max().value, dv)
     flux_line = integrand(xs)
     xs_wav = doppler2wave(xs*(u.km/u.s),w0)
     flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs_wav.value)
-
     f = (flux_line + flux_bkgd) / flux_bkgd
-
     eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
-    #print 'EQW: {}'.format(np.nansum(eqw))
-    # print 'eqw_ha = {0:.2f},'.format(np.nansum(eqw))
+    eqw = np.nansum(eqw)
 
-    # flux_line = np.sum(integrand(xs)[:-1] * np.diff(xs_wav))
-    # print flux_line / flux_bkgd[len(flux_bkgd)/2]
+    print plot_title
+    print 'peak_ha = {0:.2f}*(u.km/u.s),'.format(func_center)
+    print 'fwhm_ha = {0:.2f}*(u.km/u.s),'.format(root2 - root1)
+    print 'median_ha = {0:.2f}*(u.km/u.s),'.format(md)
+    print 'sigma_ha = {0:.2f}*(u.km/u.s),'.format(sd)
+    print 'chired_ha = {0:.2f},'.format(out.redchi)
+    print 'eqw_ha = {0:.2f}*u.AA,'.format(eqw)
 
     # Convert Scipy cov matrix to standard covariance matrix.
     # cov = out.covar*dof / out.chisqr
 
-    """
-    Calculate S/N ratio per resolution element
-    """
+    # """
+    # Calculate S/N ratio per resolution element
+    # """
 
-    vdat = wave2doppler(wav, w0)
-    vmin = md - 10000.0
-    vmax = md + 10000.0
+    # vdat = wave2doppler(wav, w0)
+    # vmin = md - 10000.0
+    # vmax = md + 10000.0
 
-    i = np.argmin(np.abs(vdat.value - vmin))
-    j = np.argmin(np.abs(vdat.value - vmax))
+    # i = np.argmin(np.abs(vdat.value - vmin))
+    # j = np.argmin(np.abs(vdat.value - vmax))
 
-    fl = flux[i:j]
-    er = err[i:j]
-    w = wav[i:j]
-    dw1 = dw[i:j]
+    # fl = flux[i:j]
+    # er = err[i:j]
+    # w = wav[i:j]
+    # dw1 = dw[i:j]
 
-    good = (er > 0) & ~np.isnan(fl)
-    if len(good.nonzero()[0]) == 0:
-        print('No good data in this range!')
+    # good = (er > 0) & ~np.isnan(fl)
+    # if len(good.nonzero()[0]) == 0:
+    #     print('No good data in this range!')
 
-    fl = fl[good]
-    er = er[good]
-    w = w[good]
-    dw1 = dw1[good]
+    # fl = fl[good]
+    # er = er[good]
+    # w = w[good]
+    # dw1 = dw1[good]
 
-    snr = fl / er
+    # snr = fl / er
 
-    # fig, ax = plt.subplots()
-    # ax.plot(w,np.sqrt(33.02/dw) * snr)
+  
+    # # 33.02 is the A per resolution element I measured from the Arc spectrum
+    # # print 'snr_ha = {0:.2f}'.format(np.mean(np.sqrt(33.02/dw1) * snr))
 
-    # 33.02 is the A per resolution element I measured from the Arc spectrum
-    # print 'snr_ha = {0:.2f}'.format(np.mean(np.sqrt(33.02/dw1) * snr))
+    # vdat = wave2doppler(wav, 4862.721*u.AA)
+    # vmin = md - 10000.0
+    # vmax = md + 10000.0
 
-    vdat = wave2doppler(wav, 4862.721*u.AA)
-    vmin = md - 10000.0
-    vmax = md + 10000.0
+    # i = np.argmin(np.abs(vdat.value - vmin))
+    # j = np.argmin(np.abs(vdat.value - vmax))
 
-    i = np.argmin(np.abs(vdat.value - vmin))
-    j = np.argmin(np.abs(vdat.value - vmax))
+    # fl = flux[i:j]
+    # er = err[i:j]
+    # w = wav[i:j]
+    # dw1 = dw[i:j]
 
-    fl = flux[i:j]
-    er = err[i:j]
-    w = wav[i:j]
-    dw1 = dw[i:j]
+    # good = (er > 0) & ~np.isnan(fl)
+    # if len(good.nonzero()[0]) == 0:
+    #     print('No good data in this range!')
 
-    good = (er > 0) & ~np.isnan(fl)
-    if len(good.nonzero()[0]) == 0:
-        print('No good data in this range!')
+    # fl = fl[good]
+    # er = er[good]
+    # w = w[good]
+    # dw1 = dw1[good]
 
-    fl = fl[good]
-    er = er[good]
-    w = w[good]
-    dw1 = dw1[good]
+    # snr = fl / er
 
-    snr = fl / er
+    # # fig, ax = plt.subplots()
+    # # ax.plot(w,np.sqrt(33.02/dw) * snr)
 
-    # fig, ax = plt.subplots()
-    # ax.plot(w,np.sqrt(33.02/dw) * snr)
+    # # 33.02 is the A per resolution element I measured from the Arc spectrum
+    # # print 'snr_hb = {0:.2f}'.format(np.mean(np.sqrt(33.02/dw1) * snr))
 
-    # 33.02 is the A per resolution element I measured from the Arc spectrum
-    # print 'snr_hb = {0:.2f}'.format(np.mean(np.sqrt(33.02/dw1) * snr))
-
-    print '\n'
-    # plt.show()
+    # print '\n'
+    # # plt.show()
 
     if plot:
         plot_fit(wav=wav,
@@ -605,7 +568,8 @@ def fit_line(wav,
                  continuum_region=continuum_region,
                  fitting_region=fitting_region,
                  plot_region=plot_region,
-                 plot_title=plot_title)
+                 plot_title=plot_title,
+                 line_region=line_region)
 
     if save_dir is not None:
 
