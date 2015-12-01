@@ -74,6 +74,9 @@ def plot_fit(wav=None,
              line_region=[-10000,10000]*(u.km/u.s)):
 
 
+    if plot_region.unit == (u.km/u.s):
+        plot_region = doppler2wave(plot_region, w0)
+
     # plotting region
     plot_region_inds = (wav > plot_region[0]) & (wav < plot_region[1])
 
@@ -86,13 +89,17 @@ def plot_fit(wav=None,
     yerr = err[plot_region_inds]
 
     plt.rc('axes', color_cycle=Set2_5.mpl_colors) 
-    fig = plt.figure(figsize=(6,15))
+    fig = plt.figure(figsize=(6,18))
 
-    fit = fig.add_subplot(4,1,1)
+    fit = fig.add_subplot(5,1,1)
     fit.set_xticklabels( () )
-    residuals = fig.add_subplot(4,1,2)
+    residuals = fig.add_subplot(5,1,2)
+    
+    eb = fig.add_subplot(5,1,3)
+    residuals.set_xticklabels( () )
 
-   
+    fs = fig.add_subplot(5,1,5)
+
     fit.scatter(vdat.value, ydat, edgecolor='None', s=15, alpha=0.9, facecolor='black')
 
     # Mark continuum fitting region
@@ -112,19 +119,27 @@ def plot_fit(wav=None,
     residuals.axvspan(blue_cont.value[0], blue_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
     residuals.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
 
+    eb.axvspan(blue_cont.value[0], blue_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
+    eb.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
+
     # Region where equivalent width etc. calculated.
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
-    func_center = optimize.fmin(lambda x: -integrand(x) , 0)[0]
+    func_max = np.max(integrand(vdat))
     
+    eb.axvline(line_region[0].value, color='black', linestyle='--')
+    eb.axvline(line_region[1].value, color='black', linestyle='--')
+
     fit.axvline(line_region[0].value, color='black', linestyle='--')
     fit.axvline(line_region[1].value, color='black', linestyle='--')
+
+    fs.axvline(doppler2wave(line_region[0], w0).value, color='black', linestyle='--')
+    fs.axvline(doppler2wave(line_region[1], w0).value, color='black', linestyle='--')
 
     # Mark fitting region
     fr = wave2doppler(fitting_region, w0)
 
     # set y axis scale
-    ind_center = np.argmin(np.abs(vdat.value - func_center))
-    fit.set_ylim(-0.2*ydat[ind_center], 1.2*ydat[ind_center])
+    fit.set_ylim(-0.3*func_max, 1.3*func_max)
 
     # Mask out regions
     xdat_masking = np.arange(xdat.min().value, xdat.max().value, 0.05)*(u.AA)
@@ -154,6 +169,8 @@ def plot_fit(wav=None,
     for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
         fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')
         residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')
+        eb.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')  
+        fs.axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, alpha=0.4, color='moccasin')
 
     line, = fit.plot(np.sort(vdat.value), resid(pars, np.sort(vdat.value), mod), color='black', lw=2)
 
@@ -215,7 +232,7 @@ def plot_fit(wav=None,
     # plt.figtext(0.1,0.18,figtxt,fontsize=10,va='top')
 
 
-    eb = fig.add_subplot(4,1,3)
+    
     eb.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.5, color='grey')
     eb.plot(np.sort(vdat.value), resid(pars, np.sort(vdat.value), mod), color='black', lw=2)
     eb.set_xlim(fit.get_xlim())
@@ -233,10 +250,21 @@ def plot_fit(wav=None,
     vdat = wave2doppler(xdat, w0)
     ydat = flux[fitting]
     yerr = err[fitting]
-    hg = fig.add_subplot(4,1,4)
+    hg = fig.add_subplot(5,1,4)
     hg.hist((ydat - resid(pars, vdat.value, mod)) / yerr, bins=np.arange(-5,5,0.25), normed=True, edgecolor='None')
     x_axis = np.arange(-5, 5, 0.001)
     hg.plot(x_axis, norm.pdf(x_axis,0,1), color='black', lw=2)
+
+    #########################################
+
+    
+    fs.plot(wav, flux, color='black', lw=1)
+    blue_cont_wav = doppler2wave(blue_cont, w0)
+    red_cont_wav = doppler2wave(red_cont, w0)
+
+    fs.axvspan(blue_cont_wav.value[0], blue_cont_wav.value[1], color='grey', lw = 1, alpha = 0.2 )
+    fs.axvspan(red_cont_wav.value[0], red_cont_wav.value[1], color='grey', lw = 1, alpha = 0.2 )
+
 
     fig.tight_layout()
 
@@ -421,19 +449,22 @@ def fit_line(wav,
     # pars['g2_sigma'].max = pars['g0_sigma'].value
     # pars['g1_sigma'].expr = 'g2_sigma * 1.0'
 
-
-    out = minimize(resid,
-                   pars,
-                   args=(np.asarray(vdat), mod, ydat, yerr),
-                   method ='nelder')
-
-    if verbose:
-        print fit_report(pars)
+    for i in range(len(vdat)):
+        if ydat[i] < 0.0:
+            print vdat[i], ydat[i], yerr[i]
 
     out = minimize(resid,
                    pars,
                    args=(np.asarray(vdat), mod, ydat, yerr),
                    method ='leastsq')
+
+    if verbose:
+        print fit_report(pars)
+
+    # out = minimize(resid,
+    #                pars,
+    #                args=(np.asarray(vdat), mod, ydat, yerr),
+    #                method ='leastsq')
 
 
 
@@ -441,6 +472,9 @@ def fit_line(wav,
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
 
     # Calculate FWHM of distribution
+    if line_region.unit == u.AA:
+        line_region = wave2doppler(line_region, w0)
+
     dv = 1.0 # i think if this was anything else might need to change intergration.
     xs = np.arange(line_region.value[0], line_region[1].value, dv) 
 
