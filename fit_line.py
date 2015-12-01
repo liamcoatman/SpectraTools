@@ -110,18 +110,6 @@ def plot_fit(wav=None,
     if continuum_region[1].unit == (u.km/u.s):
         continuum_region[1] = doppler2wave(continuum_region[1], w0)
 
-    blue_cont = wave2doppler(continuum_region[0], w0)
-    red_cont = wave2doppler(continuum_region[1], w0)
-
-    fit.axvspan(blue_cont.value[0], blue_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
-    fit.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
-
-    residuals.axvspan(blue_cont.value[0], blue_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
-    residuals.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
-
-    eb.axvspan(blue_cont.value[0], blue_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
-    eb.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
-
     # Region where equivalent width etc. calculated.
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
     func_max = np.max(integrand(vdat))
@@ -135,6 +123,10 @@ def plot_fit(wav=None,
     fs.axvline(doppler2wave(line_region[0], w0).value, color='black', linestyle='--')
     fs.axvline(doppler2wave(line_region[1], w0).value, color='black', linestyle='--')
 
+    fit.axhline(0, color='black', linestyle='--')
+    fs.axhline(0, color='black', linestyle='--')
+    eb.axhline(0, color='black', linestyle='--')
+    
     # Mark fitting region
     fr = wave2doppler(fitting_region, w0)
 
@@ -147,6 +139,36 @@ def plot_fit(wav=None,
 
     mask = (vdat_masking.value < fr.value[0]) | (vdat_masking.value > fr.value[1])
 
+    if maskout is not None:
+
+        if maskout.unit == (u.km/u.s):
+
+            for item in maskout:
+                mask = mask | ((vdat_masking.value > item.value[0]) & (vdat_masking.value < item.value[1]))
+
+        elif maskout.unit == (u.AA):
+
+            for item in maskout:
+                xmin = item.value[0] / (1.0 + z)
+                xmax = item.value[1] / (1.0 + z)
+                mask = mask | ((xdat_masking.value > xmin) & (xdat_masking.value < xmax))
+
+    vdat1_masking = ma.array(vdat_masking.value)
+    vdat1_masking[mask] = ma.masked 
+
+    for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
+        fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')
+        residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')
+        eb.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')  
+        fs.axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, alpha=0.4, color='moccasin')
+
+    # Now do continuum regions, which is now in wavelength units 
+    xdat_masking = np.arange(xdat.min().value, xdat.max().value, 0.05)*(u.AA)
+    vdat_masking = wave2doppler(xdat_masking, w0)
+
+    mask = (xdat_masking.value < continuum_region[0][0].value) | \
+           ((xdat_masking.value > continuum_region[0][1].value) &  (xdat_masking.value < continuum_region[1][0].value))  | \
+           (xdat_masking.value > continuum_region[1][1].value)
 
     if maskout is not None:
 
@@ -167,10 +189,10 @@ def plot_fit(wav=None,
     vdat1_masking[mask] = ma.masked 
 
     for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
-        fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')
-        residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')
-        eb.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='moccasin')  
-        fs.axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, alpha=0.4, color='moccasin')
+        fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='powderblue')
+        residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='powderblue')
+        eb.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='powderblue')  
+        fs.axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, alpha=0.4, color='powderblue')    
 
     line, = fit.plot(np.sort(vdat.value), resid(pars, np.sort(vdat.value), mod), color='black', lw=2)
 
@@ -259,12 +281,6 @@ def plot_fit(wav=None,
 
     
     fs.plot(wav, flux, color='black', lw=1)
-    blue_cont_wav = doppler2wave(blue_cont, w0)
-    red_cont_wav = doppler2wave(red_cont, w0)
-
-    fs.axvspan(blue_cont_wav.value[0], blue_cont_wav.value[1], color='grey', lw = 1, alpha = 0.2 )
-    fs.axvspan(red_cont_wav.value[0], red_cont_wav.value[1], color='grey', lw = 1, alpha = 0.2 )
-
 
     fig.tight_layout()
 
@@ -294,12 +310,10 @@ def fit_line(wav,
              plot=True,
              plot_savefig='something.png',
              plot_title='',
-             save_dir=None):
+             save_dir=None,
+             bkgd_median=True):
 
     """
-    Velocity shift added to doppler shift to change zero point (can do if HW10
-    redshift does not agree with Halpha centroid)
-
     Fiting and continuum regions given in rest frame wavelengths with
     astropy angstrom units.
 
@@ -312,47 +326,90 @@ def fit_line(wav,
     wav = wav*u.AA
     dw = dw / (1.0 + z)
 
-    # Check if continuum is given in wavelength or doppler units
-    if continuum_region[0].unit == (u.km/u.s):
-        continuum_region[0] = doppler2wave(continuum_region[0], w0)
-    if continuum_region[1].unit == (u.km/u.s):
-        continuum_region[1] = doppler2wave(continuum_region[1], w0)
-
-    # index is true in the region where we fit the continuum
-    continuum = ((wav > continuum_region[0][0]) & \
-                 (wav < continuum_region[0][1])) | \
-                 ((wav > continuum_region[1][0]) & \
-                 (wav < continuum_region[1][1]))
-
     # index of the region we want to fit
-
     if fitting_region.unit == (u.km/u.s):
         fitting_region = doppler2wave(fitting_region, w0)
 
     fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
 
     # fit power-law to continuum region
-    # For civ we use median because more robust for small wavelength intervals. Ha we will fit to the data points since windows are much larger. 
+    # For civ we use median because more robust for small wavelength intervals. 
+    # Ha we will fit to the data points since windows are much larger. 
 
-    xdat_cont = wav[continuum]
-    ydat_cont = flux[continuum]
-    yerr_cont = err[continuum]
+    # index of region for continuum fit 
+    if continuum_region[0].unit == (u.km/u.s):
+        continuum_region[0] = doppler2wave(continuum_region[0], w0)
+    if continuum_region[1].unit == (u.km/u.s):
+        continuum_region[1] = doppler2wave(continuum_region[1], w0)
 
     bkgdmod = PowerLawModel()
     bkgdpars = bkgdmod.make_params()
     bkgdpars['exponent'].value = 1.0
     bkgdpars['amplitude'].value = 1.0
 
-    # don't know if its the best idea to minimize twice. 
-    out = minimize(resid,
-                   bkgdpars,
-                   args=(xdat_cont.value, bkgdmod, ydat_cont, yerr_cont),
-                   method='nelder')
+    blue_inds = (wav > continuum_region[0][0]) & (wav < continuum_region[0][1])
+    red_inds = (wav > continuum_region[1][0]) & (wav < continuum_region[1][1])   
 
-    out = minimize(resid,
-                   bkgdpars,
-                   args=(xdat_cont.value, bkgdmod, ydat_cont, yerr_cont),
-                   method='leastsq')
+    xdat_blue = wav[blue_inds]
+    ydat_blue = flux[blue_inds]
+    yerr_blue = err[blue_inds]
+    vdat_blue = wave2doppler(xdat_blue, w0)
+
+    xdat_red = wav[red_inds]
+    ydat_red = flux[red_inds]
+    yerr_red = err[red_inds]
+    vdat_red = wave2doppler(xdat_red, w0)
+
+    if maskout is not None:
+
+        mask_blue = np.array([True] * len(xdat_blue))
+        mask_red = np.array([True] * len(xdat_red))
+
+        if maskout.unit == (u.km/u.s):
+            
+            for item in maskout:
+                mask_blue[(vdat_blue > item[0]) & (vdat_blue < item[1])] = False
+                mask_red[(vdat_red > item[0]) & (vdat_red < item[1])] = False
+
+        elif maskout.unit == (u.AA):
+
+            for item in maskout:
+                mask_blue[(xdat_blue > (item[0] / (1.0 + z))) & (xdat_blue < (item[1] / (1.0 + z)))] = False
+                mask_red[(xdat_red > (item[0] / (1.0 + z))) & (xdat_red < (item[1] / (1.0 + z)))] = False
+
+        else:
+            print "Units must be km/s or angstrom"
+
+        xdat_blue = xdat_blue[mask_blue]
+        ydat_blue = ydat_blue[mask_blue]
+        yerr_blue = yerr_blue[mask_blue]
+        vdat_blue = vdat_blue[mask_blue]
+        xdat_red = xdat_red[mask_red]
+        ydat_red = ydat_red[mask_red]
+        yerr_red = yerr_red[mask_red]
+        vdat_red = vdat_red[mask_red]
+
+
+    if bkgd_median is True:
+
+        xdat_cont = np.array( [np.median(xdat_blue.value), np.median(xdat_red.value)] )
+        ydat_cont = np.array( [np.median(ydat_blue), np.median(ydat_red)] )
+
+        out = minimize(resid,
+                       bkgdpars,
+                       args=(xdat_cont, bkgdmod, ydat_cont),
+                       method='leastsq')
+
+    if bkgd_median is False:
+
+        xdat_cont = np.concatenate((xdat_blue, xdat_red))
+        ydat_cont = np.concatenate((ydat_blue, ydat_red))
+        yerr_cont = np.concatenate((yerr_blue, yerr_red))
+
+        out = minimize(resid,
+                       bkgdpars,
+                       args=(xdat_cont.value, bkgdmod, ydat_cont, yerr_cont),
+                       method='leastsq')
 
     if verbose:
         print fit_report(bkgdpars)
@@ -456,7 +513,7 @@ def fit_line(wav,
     out = minimize(resid,
                    pars,
                    args=(np.asarray(vdat), mod, ydat, yerr),
-                   method ='leastsq')
+                   method ='nelder')
 
     if verbose:
         print fit_report(pars)
