@@ -22,7 +22,28 @@ import cPickle as pickle
 from scipy.stats import norm
 from scipy.ndimage.filters import median_filter
 from palettable.colorbrewer.qualitative import Set2_5
+from time import gmtime, strftime
 
+
+class line_props(object):
+    
+    def __init__(self, 
+                 name, 
+                 peak,
+                 fwhm ,
+                 median,
+                 sigma,
+                 redchi,
+                 eqw):
+
+        self.name = name
+        self.peak = peak 
+        self.fwhm = fwhm
+        self.median = median 
+        self.sigma = sigma 
+        self.redchi = redchi
+        self.eqw = eqw 
+      
 def resid(p,x,model,data=None,sigma=None):
 
         mod = model.eval( params=p, x=x )
@@ -65,13 +86,15 @@ def plot_fit(wav=None,
              out=None,
              plot_savefig=None,
              plot_title='',
+             save_dir=None,
              maskout=None,
              z=0.0,
              w0=6564.89*u.AA,
              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
              fitting_region=[6400,6800]*u.AA,
              plot_region=None,
-             line_region=[-10000,10000]*(u.km/u.s)):
+             line_region=[-10000,10000]*(u.km/u.s),
+             mask_negflux = True):
 
 
     if plot_region.unit == (u.km/u.s):
@@ -242,17 +265,7 @@ def plot_fit(wav=None,
             fit.plot( np.sort(vdat.value), comp_mod.eval(comp_p, x=np.sort(vdat.value)) )
 
 
-
-
-    # plt.figtext(0.05,0.23,plot_title,fontsize=10)
-    # plt.figtext(0.05,0.20,r"Converged with $\chi^2$ = " + str(out.chisqr) + ", DOF = " + str(out.nfree), fontsize=10)
-
-    # figtxt = ''
-    # for i in pars.valuesdict():
-    #     figtxt += i + ' = {0} \n'.format( float('{0:.4g}'.format( pars[i].value)))
-
-    # plt.figtext(0.1,0.18,figtxt,fontsize=10,va='top')
-
+    #################################################
 
     
     eb.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.5, color='grey')
@@ -261,7 +274,7 @@ def plot_fit(wav=None,
     eb.set_ylim(fit.get_ylim())
 
     fit.set_ylabel(r'F$_\lambda$', fontsize=12)
-    eb.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=12)
+    eb.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=10)
     eb.set_ylabel(r'F$_\lambda$', fontsize=12)
     residuals.set_ylabel("Residual")
 
@@ -273,19 +286,47 @@ def plot_fit(wav=None,
     ydat = flux[fitting]
     yerr = err[fitting]
     hg = fig.add_subplot(5,1,4)
-    hg.hist((ydat - resid(pars, vdat.value, mod)) / yerr, bins=np.arange(-5,5,0.25), normed=True, edgecolor='None')
+    hg.hist((ydat - resid(pars, vdat.value, mod)) / yerr, bins=np.arange(-5,5,0.25), normed=True, edgecolor='None', facecolor='lightgrey')
     x_axis = np.arange(-5, 5, 0.001)
     hg.plot(x_axis, norm.pdf(x_axis,0,1), color='black', lw=2)
 
     #########################################
 
+    fs.plot(wav, median_filter(flux,5.0), color='black', lw=1)
+    fs.set_xlim(wav.min().value, wav.max().value)
+    fs.set_ylim(-1*func_max, 2*func_max)
+
+
+    ########################################################
+
+    """
+    If any flux values are negative could cause problems in fit.
+    Highlight these by coloring points 
+    """
+    if mask_negflux:
+
+        xdat = wav[fitting]
+        vdat = wave2doppler(xdat, w0)
+        ydat = flux[fitting]
+        yerr = err[fitting]
     
-    fs.plot(wav, flux, color='black', lw=1)
+        bad_points = (ydat < 0.0)
+    
+        xdat_bad = xdat[bad_points]
+        vdat_bad = vdat[bad_points]
+        ydat_bad = ydat[bad_points]
+        yerr_bad = yerr[bad_points]
+    
+        fit.scatter(vdat_bad, ydat_bad, color='darkred', s=40, marker='x')
+        residuals.scatter(vdat_bad, ydat_bad, color='darkred', s=40, marker='x')
+        eb.scatter(vdat_bad, ydat_bad, color='darkred', s=40, marker='x')
+        fs.scatter(xdat_bad, ydat_bad, color='darkred', s=40, marker='x')
+
 
     fig.tight_layout()
 
     if plot_savefig is not None:
-        fig = fig.savefig(plot_savefig)
+        fig = fig.savefig(os.path.join(save_dir, plot_savefig))
 
 
     plt.show()
@@ -311,7 +352,9 @@ def fit_line(wav,
              plot_savefig='something.png',
              plot_title='',
              save_dir=None,
-             bkgd_median=True):
+             bkgd_median=True,
+             fitting_method='leastsq',
+             mask_negflux = True):
 
     """
     Fiting and continuum regions given in rest frame wavelengths with
@@ -506,24 +549,61 @@ def fit_line(wav,
     # pars['g2_sigma'].max = pars['g0_sigma'].value
     # pars['g1_sigma'].expr = 'g2_sigma * 1.0'
 
-    for i in range(len(vdat)):
-        if ydat[i] < 0.0:
-            print vdat[i], ydat[i], yerr[i]
+    if any(y < 0.0 for y in ydat):
+        print 'Warning: Negative flux values in fitting region!'
+
+    # Remove negative flux values which can mess up fit 
+    if mask_negflux:
+
+        posflux = (ydat > 0.0) 
+    
+        xdat = xdat[posflux] 
+        ydat = ydat[posflux] 
+        yerr = yerr[posflux]
+        vdat = vdat[posflux] 
 
     out = minimize(resid,
                    pars,
                    args=(np.asarray(vdat), mod, ydat, yerr),
-                   method ='nelder')
+                   method = fitting_method)
 
     if verbose:
         print fit_report(pars)
 
-    # out = minimize(resid,
-    #                pars,
-    #                args=(np.asarray(vdat), mod, ydat, yerr),
-    #                method ='leastsq')
+    if save_dir is not None:
+        
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
 
+        param_file = os.path.join(save_dir, 'my_params.txt')
+        parfile = open(param_file, 'w')
+        pars.dump(parfile)
+        parfile.close()
 
+        wav_file = os.path.join(save_dir, 'wav.txt')
+        parfile = open(wav_file, 'wb')
+        pickle.dump(wav, parfile, -1)
+        parfile.close()
+
+        flx_file = os.path.join(save_dir, 'flx.txt')
+        parfile = open(flx_file, 'wb')
+        pickle.dump(flux - resid(bkgdpars, wav.value, bkgdmod), parfile, -1)
+        parfile.close()
+
+        err_file = os.path.join(save_dir, 'err.txt')
+        parfile = open(err_file, 'wb')
+        pickle.dump(err, parfile, -1)
+        parfile.close()
+
+        fittxt = ''    
+        fittxt += strftime("%Y-%m-%d %H:%M:%S", gmtime()) + '\n \n'
+        fittxt += plot_title + '\n \n'
+        fittxt += r'Converged with chi-squared = ' + str(out.chisqr) + ', DOF = ' + str(out.nfree) + '\n \n'
+        fittxt += fit_report(pars)
+    
+
+        with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+            f.write(fittxt) 
 
     # Calculate stats 
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
@@ -565,23 +645,37 @@ def fit_line(wav,
 
     # Equivalent width
     flux_line = integrand(xs)
-    xs_wav = doppler2wave(xs*(u.km/u.s),w0)
+    xs_wav = doppler2wave(xs*(u.km/u.s), w0)
     flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs_wav.value)
     f = (flux_line + flux_bkgd) / flux_bkgd
     eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
     eqw = np.nansum(eqw)
 
-    print plot_title
-    print 'peak_ha = {0:.2f}*(u.km/u.s),'.format(func_center)
-    print 'fwhm_ha = {0:.2f}*(u.km/u.s),'.format(root2 - root1)
-    print 'median_ha = {0:.2f}*(u.km/u.s),'.format(md)
-    print 'sigma_ha = {0:.2f}*(u.km/u.s),'.format(sd)
-    print 'chired_ha = {0:.2f},'.format(out.redchi)
-    print 'eqw_ha = {0:.2f}*u.AA,'.format(eqw)
+    print plot_title, '{0:.2f},'.format(root2 - root1), '{0:.2f},'.format(sd), '{0:.2f},'.format(md), '{0:.2f},'.format(func_center), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
+    # print 'peak_ha = {0:.2f}*(u.km/u.s),'.format(func_center)
+    # print 'fwhm_ha = {0:.2f}*(u.km/u.s),'.format(root2 - root1)
+    # print 'median_ha = {0:.2f}*(u.km/u.s),'.format(md)
+    # print 'sigma_ha = {0:.2f}*(u.km/u.s),'.format(sd)
+    # print 'chired_ha = {0:.2f},'.format(out.redchi)
+    # print 'eqw_ha = {0:.2f}*u.AA,'.format(eqw)
 
-    # Convert Scipy cov matrix to standard covariance matrix.
-    # cov = out.covar*dof / out.chisqr
+    if save_dir is not None:
 
+        with open(os.path.join(save_dir, 'fit.txt'), 'a') as f:
+            f.write('\n \n')
+            f.write('Peak: {0:.2f} km/s \n'.format(func_center))
+            f.write('FWHM: {0:.2f} km/s \n'.format(root2 - root1))
+            f.write('Median: {0:.2f} km/s \n'.format(md))
+            f.write('Sigma: {0:.2f} km/s \n'.format(sd))
+            f.write('Reduced chi-squared: {0:.2f} \n'.format(out.redchi))
+            f.write('EQW: {0:.2f} A \n'.format(eqw))      
+
+        my_line_props = line_props(plot_title, func_center, root2 - root1, md, sd, out.redchi, eqw)  
+        param_file = os.path.join(save_dir, 'line_props.txt')
+        parfile = open(param_file, 'w')
+        pickle.dump(my_line_props, parfile, -1)
+        parfile.close()
+      
     # """
     # Calculate S/N ratio per resolution element
     # """
@@ -613,37 +707,7 @@ def fit_line(wav,
     # # 33.02 is the A per resolution element I measured from the Arc spectrum
     # # print 'snr_ha = {0:.2f}'.format(np.mean(np.sqrt(33.02/dw1) * snr))
 
-    # vdat = wave2doppler(wav, 4862.721*u.AA)
-    # vmin = md - 10000.0
-    # vmax = md + 10000.0
 
-    # i = np.argmin(np.abs(vdat.value - vmin))
-    # j = np.argmin(np.abs(vdat.value - vmax))
-
-    # fl = flux[i:j]
-    # er = err[i:j]
-    # w = wav[i:j]
-    # dw1 = dw[i:j]
-
-    # good = (er > 0) & ~np.isnan(fl)
-    # if len(good.nonzero()[0]) == 0:
-    #     print('No good data in this range!')
-
-    # fl = fl[good]
-    # er = er[good]
-    # w = w[good]
-    # dw1 = dw1[good]
-
-    # snr = fl / er
-
-    # # fig, ax = plt.subplots()
-    # # ax.plot(w,np.sqrt(33.02/dw) * snr)
-
-    # # 33.02 is the A per resolution element I measured from the Arc spectrum
-    # # print 'snr_hb = {0:.2f}'.format(np.mean(np.sqrt(33.02/dw1) * snr))
-
-    # print '\n'
-    # # plt.show()
 
     if plot:
         plot_fit(wav=wav,
@@ -653,6 +717,7 @@ def fit_line(wav,
                  mod=mod,
                  out=out,
                  plot_savefig = plot_savefig,
+                 save_dir = save_dir,
                  maskout = maskout,
                  z=z,
                  w0=w0,
@@ -660,106 +725,9 @@ def fit_line(wav,
                  fitting_region=fitting_region,
                  plot_region=plot_region,
                  plot_title=plot_title,
-                 line_region=line_region)
-
-    if save_dir is not None:
-
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-
-        param_file = os.path.join(save_dir, 'my_params.txt')
-        parfile = open(param_file, 'w')
-        pars.dump(parfile)
-        parfile.close()
-
-        wav_file = os.path.join(save_dir, 'wav.txt')
-        parfile = open(wav_file, 'wb')
-        pickle.dump(wav, parfile, -1)
-        parfile.close()
-
-        flx_file = os.path.join(save_dir, 'flx.txt')
-        parfile = open(flx_file, 'wb')
-        pickle.dump(flux - resid(bkgdpars, wav.value, bkgdmod), parfile, -1)
-        parfile.close()
+                 line_region=line_region,
+                 mask_negflux = mask_negflux)
 
 
-        err_file = os.path.join(save_dir, 'err.txt')
-        parfile = open(err_file, 'wb')
-        pickle.dump(err, parfile, -1)
-        parfile.close()
-
-
-    return xdat, ydat, yerr
-
-###Testing###
-
-if __name__ == '__main__':
-
-    from get_spectra import get_liris_spec
-    import matplotlib.pyplot as plt
-
-    fname = '/data/lc585/WHT_20150331/html/SDSSJ1339+1515/dimcombLR+bkgd_v138.ms.fits'
-    wavelength, dw, flux, err = get_liris_spec(fname)
-#    wav, flux, err = rebin_spectra(wavelength,
-#                                   flux,
-#                                   er=err,
-#                                   n=1,
-#                                   weighted=False)
-
-
-
-
-#    wav, dw, flux, err = get_boss_dr12_spec('SDSSJ133916.88+151507.6')
-
-#    fit_line(wav,
-#             flux,
-#             err,
-#             z=2.318977,
-#             w0=np.mean([1548.202,1550.774])*u.AA,
-#             velocity_shift=0.0*(u.km / u.s),
-#             continuum_region=[[1445.,1465.]*u.AA,[1700.,1705.]*u.AA],
-#             fitting_region=[1500.,1600.]*u.AA,
-#             plot_region=[1440,1720]*u.AA,
-#             nGaussians=0,
-#             nLorentzians=1,
-#             maskout=[[5107.3, 5138.2]]*u.AA,
-#             verbose=True,
-#             plot=True)
-
-#maskout=[[5107.3, 5138.2]]*u.AA,
-#maskout=[[-2064,-263]]*(u.km / u.s),
-
-    out = fit_line(wavelength,
-                   flux,
-                   err,
-                   z=2.318977,
-                   w0=6564.89*u.AA,
-                   maskout=[[4735.8, 4757.8]]*(u.AA),
-                   continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
-                   plot_title='SDSSJ133916.88+151507.6',
-                   plot_region=[6000,7000]*u.AA,
-                   plot=False,
-                   save_dir='/data/lc585/WHT_20150331/test/SDSSJ133916.88+151507.6/Ha/')
-
-
-
-#    parfile = open('my_params.txt', 'w')
-#    out['pars'].dump(parfile)
-#    parfile.close()
-#
-#    parfile = open('my_params.txt', 'r')
-#    params = Parameters()
-#    params.load(parfile)
-#    parfile.close()
-
-
-
-#
-#    p = Parameters()
-#    p.set
-
-#    with open('test.p', 'wb') as f:
-#        pickle.dump(out, f, -1)
-
-
+    return None 
 
