@@ -24,6 +24,20 @@ from scipy.ndimage.filters import median_filter
 from palettable.colorbrewer.qualitative import Set2_5
 from time import gmtime, strftime
 
+# Simple mouse click function to store coordinates
+def onclick(event):
+
+    global ix
+    
+    ix = event.xdata
+
+    coords.append(ix)
+
+    if len(coords) % 2 == 0:
+        print '[{0:.0f}, {1:.0f}]'.format(coords[-2], coords[-1])  
+        # fig.canvas.mpl_disconnect(cid)
+        
+    return None 
 
 class line_props(object):
     
@@ -325,11 +339,17 @@ def plot_fit(wav=None,
 
     fig.tight_layout()
 
+    # Call click func
+    global coords
+    coords = [] 
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+
     if plot_savefig is not None:
-        fig = fig.savefig(os.path.join(save_dir, plot_savefig))
+        fig.savefig(os.path.join(save_dir, plot_savefig))
 
 
-    plt.show()
+
+    plt.show(1)
     plt.close()
 
     return None
