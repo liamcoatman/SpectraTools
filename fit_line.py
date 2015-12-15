@@ -497,24 +497,27 @@ def fit_line(wav,
         ydat = ydat[mask]
         yerr = yerr[mask]
 
+    # Make Ha model 
+
+    
     bkgd = ConstantModel()
     mod = bkgd
     pars = bkgd.make_params()
-
+    
     # A bit unnessesary, but I need a way to do += in the loop below
     pars['c'].value = 0.0
     pars['c'].vary = False
-
+    
     for i in range(nGaussians):
         gmod = GaussianModel(prefix='g{}_'.format(i))
         mod += gmod
         pars += gmod.guess(ydat, x=vdat.value)
-
+    
     for i in range (nLorentzians):
         lmod = LorentzianModel(prefix='l{}_'.format(i))
         mod += lmod
         pars += lmod.guess(ydat, x=vdat.value)
-
+    
     for i in range(nGaussians):
         pars['g{}_center'.format(i)].value = 0.0
         pars['g{}_center'.format(i)].min = -5000.0
@@ -522,20 +525,20 @@ def fit_line(wav,
         pars['g{}_amplitude'.format(i)].min = 0.0
         #pars['g{}_sigma'.format(i)].min = 1000.0
         pars['g{}_sigma'.format(i)].max = 10000.0
-
+    
     for i in range(nLorentzians):
         pars['l{}_center'.format(i)].value = 0.0
         pars['l{}_center'.format(i)].min = -10000.0
         pars['l{}_center'.format(i)].max = 10000.0
         pars['l{}_amplitude'.format(i)].min = 0.0
-
-    # For Ha
+    
     if nGaussians == 2:
         pars['g1_center'].set(expr = 'g0_center')
     if nGaussians == 3:
         pars['g1_center'].set(expr = 'g0_center')
         pars['g2_center'].set(expr = 'g0_center')
 
+   
     # For Hb
 
     # print pars

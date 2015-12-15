@@ -25,6 +25,26 @@ from scipy import integrate, optimize
 from scipy.ndimage.filters import median_filter
 from scipy.stats import norm
 from palettable.colorbrewer.qualitative import Set2_5
+from time import gmtime, strftime
+
+class line_props(object):
+    
+    def __init__(self, 
+                 name, 
+                 peak,
+                 fwhm ,
+                 median,
+                 sigma,
+                 redchi,
+                 eqw):
+
+        self.name = name
+        self.peak = peak 
+        self.fwhm = fwhm
+        self.median = median 
+        self.sigma = sigma 
+        self.redchi = redchi
+        self.eqw = eqw 
 
 def resid(p, x, model, data=None, sigma=None):
 
@@ -101,13 +121,13 @@ def plot_fit(wav=None,
              plot_title='',
              save_dir = None,
              maskout=None,
-             red_shelf = [1580,1690]*u.AA,
              z=0.0,
              w0=6564.89*u.AA,
              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
              fitting_region=[6400,6800]*u.AA,
              plot_region=None,
-             line_region=[-10000,10000]*(u.km/u.s)):
+             line_region=[-10000,10000]*(u.km/u.s),
+             mask_negflux = True):
 
 
     # plotting region
@@ -141,6 +161,9 @@ def plot_fit(wav=None,
 
     residuals.axvline(line_region.value[0], color='black', linestyle='--')
     residuals.axvline(line_region.value[1], color='black', linestyle='--')
+
+    eb.axvline(line_region.value[0], color='black', linestyle='--')
+    eb.axvline(line_region.value[1], color='black', linestyle='--')
 
     #fit.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.4)
     #fit.scatter(vdat.value, ydat, edgecolor='None', alpha=0.5)
@@ -177,8 +200,6 @@ def plot_fit(wav=None,
                 xmax = item.value[1] / (1.0 + z)
                 mask = mask | ((xdat_masking.value > xmin) & (xdat_masking.value < xmax))
 
-    # mask out redshelf from fit
-    mask = mask | ((xdat_masking.value > red_shelf[0].value) & (xdat_masking.value < red_shelf[1].value))
 
     vdat1_masking = ma.array(vdat_masking.value)
     vdat1_masking[mask] = ma.masked
@@ -235,6 +256,7 @@ def plot_fit(wav=None,
     fit.set_xlim(plotting_limits[0].value, plotting_limits[1].value)
 
     fit.axhline(0, color='black', linestyle='--')
+    eb.axhline(0, color='black', linestyle='--')
 
     eb.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.5, color='grey')
     eb.plot(vs, flux_mod, color='black', lw=2)
@@ -278,14 +300,42 @@ def plot_fit(wav=None,
     yerr = err[fitting]
 
     hg = fig.add_subplot(5,1,4)
-    hg.hist((ydat - gausshermite(vdat.value/xscal, pars, order)) / yerr, bins=np.arange(-5,5,0.25), normed=True, edgecolor='None')
+    hg.hist((ydat - gausshermite(vdat.value/xscal, pars, order)) / yerr, bins=np.arange(-5,5,0.25), normed=True, edgecolor='None', color='lightgrey')
     x_axis = np.arange(-5, 5, 0.001)
     hg.plot(x_axis, norm.pdf(x_axis,0,1), color='black', lw=2)
 
     #########################################################
 
-    fs.plot(wav, flux, color='black', lw=1)
-  
+    fs.plot(wav, median_filter(flux,5.0), color='black', lw=1)
+    fs.set_xlim(wav.min().value, wav.max().value)
+    fs.set_ylim(-1*func_max, 2*func_max) 
+
+    ########################################################
+
+    """
+    If any flux values are negative could cause problems in fit.
+    Highlight these by coloring points 
+    """
+
+    if mask_negflux: 
+
+        xdat = wav[fitting]
+        vdat = wave2doppler(xdat, w0)
+        ydat = flux[fitting]
+        yerr = err[fitting]
+    
+        bad_points = (ydat < 0.0)
+    
+        xdat_bad = xdat[bad_points]
+        vdat_bad = vdat[bad_points]
+        ydat_bad = ydat[bad_points]
+        yerr_bad = yerr[bad_points]
+    
+        fit.scatter(vdat_bad, ydat_bad, color='orangered', s=40, marker='x')
+        residuals.scatter(vdat_bad, ydat_bad, color='orangered', s=40, marker='x')
+        eb.scatter(vdat_bad, ydat_bad, color='orangered', s=40, marker='x')
+        fs.scatter(xdat_bad, ydat_bad, color='orangered', s=40, marker='x')
+
     fig.tight_layout()
 
     if plot_savefig is not None:
@@ -305,7 +355,6 @@ def fit_line(wav,
              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
              fitting_region=[6400,6800]*u.AA,
              plot_region=[6000,7000]*u.AA,
-             red_shelf = [1580,1690]*u.AA,
              line_region=[-10000,10000]*(u.km/u.s),
              maskout=None,
              order=6,
@@ -314,7 +363,9 @@ def fit_line(wav,
              plot_title='',
              verbose=True,
              save_dir=None,
-             bkgd_median=True):
+             bkgd_median=True,
+             fitting_method='leastsq',
+             mask_negflux=True):
 
     """
     Velocity shift added to doppler shift to change zero point (can do if HW10
@@ -435,12 +486,7 @@ def fit_line(wav,
     Accepts units km/s or angstrom (observed frame)
     """
 
-    # mask out redshelf from fit
     mask = np.array([True] * len(vdat))
-    red_shelf_start = wave2doppler(red_shelf[0], w0)
-    red_shelf_end = wave2doppler(red_shelf[1], w0)
-
-    mask[(vdat > red_shelf_start) & (vdat < red_shelf_end)] = False
 
     if maskout is not None:
 
@@ -473,7 +519,6 @@ def fit_line(wav,
     v = np.sum(p * (vdat-m)**2)
     sd = np.sqrt(v)
 
-    vs = np.linspace(vdat.min(), vdat.max(), 1000)
 
     pars = Parameters()
 
@@ -512,15 +557,22 @@ def fit_line(wav,
         pars.add('sig6', value = 1.0, min=0.1)
         pars.add('cen6', value = 0.0, min=vdat.min().value/sd.value, max=vdat.max().value/sd.value)
 
+    if any(y < 0.0 for y in ydat):
+        print 'Warning: Negative flux values in fitting region!'
+
+    # Remove negative flux values which can mess up fit 
+    if mask_negflux: 
+        posflux = (ydat > 0.0) 
+    
+        xdat = xdat[posflux] 
+        ydat = ydat[posflux] 
+        yerr = yerr[posflux]
+        vdat = vdat[posflux] 
+
     out = minimize(gh_resid,
                    pars,
                    args=(vdat.value/sd.value, order, ydat, yerr),
-                   method='leastsq')
-
-    # with open('file.txt', 'w') as f:
-    #     for wl, fl, m in zip(np.asarray(vtemp), ydattemp, gh_resid(pars, np.asarray(vtemp)/sd.value, order)):
-    #         f.write('{0:20} {1:20} {2:20} \n'.format(wl, fl, m))
-
+                   method=fitting_method)
 
     if verbose:
         for key, value in pars.valuesdict().items():
@@ -562,21 +614,19 @@ def fit_line(wav,
         pickle.dump(sd.value, parfile, -1)
         parfile.close()
 
+        fittxt = ''    
+        fittxt += strftime("%Y-%m-%d %H:%M:%S", gmtime()) + '\n \n'
+        fittxt += plot_title + '\n \n'
+        fittxt += r'Converged with chi-squared = ' + str(out.chisqr) + ', DOF = ' + str(out.nfree) + '\n \n'
+        fittxt += fit_report(pars)
+
+        with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+            f.write(fittxt) 
+
     # Calculate FWHM of distribution
-
     integrand = lambda x: gh_resid(pars, x, order)
-    # func_center = optimize.fmin(lambda x: -integrand(x) , 0)[0]
-    # print 'Peak: {}'.format(func_center * sd.value)
-
-    # # half_max = integrand(func_center) / 2.0
-
-    # # root1 = optimize.brentq(lambda x: integrand(x) - half_max, vdat.min().value, func_center)
-    # # root2 = optimize.brentq(lambda x: integrand(x) - half_max, func_center, vdat.max().value)
-
-    # # print 'FWHM: {}'.format((root2 - root1)* sd.value)
-
+    
     dv = 1.0
-    # xs = np.arange(vdat.min().value, vdat.max().value, dv) / sd.value
 
     if line_region.unit == u.AA:
         line_region = wave2doppler(line_region, w0)
@@ -588,10 +638,8 @@ def fit_line(wav,
     cdf = np.cumsum(pdf)
     cdf_r = np.cumsum(pdf[::-1])[::-1] # reverse cumsum
 
-
     func_center = xs[np.argmax(pdf)]
-    # print 'Peak: {}'.format(func_center * sd.value)
-
+   
     half_max = np.max(pdf) / 2.0
 
     i = 0
@@ -606,84 +654,47 @@ def fit_line(wav,
 
     root2 = xs[-i]
 
-    # print 'FWHM: {}'.format((root2 - root1)* sd.value)
-
     md = xs[np.argmin( np.abs( cdf - 0.5))]
-    # print 'Median: {}'.format(md * sd.value)
-
-
-    # # Not sure this would work if median far from zero but probably would never happen.
-    p99 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.005))] - xs[np.argmin(np.abs(cdf - 0.005))])* sd.value
-    p95 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.025))] - xs[np.argmin(np.abs(cdf - 0.025))])* sd.value
-    p90 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.05))] - xs[np.argmin(np.abs(cdf - 0.05))])* sd.value
-    p80 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.1))] - xs[np.argmin(np.abs(cdf - 0.1))])* sd.value
-    p60 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.2))] - xs[np.argmin(np.abs(cdf - 0.2))])* sd.value
-
-    # # print '99%: {}'.format(p99)
-    # # print '95%: {}'.format(p95)
-    # # print '90%: {}'.format(p90)
-    # # print '80%: {}'.format(p80)
-    # # print '60%: {}'.format(p60)
+    
+    # Not sure this would work if median far from zero but probably would never happen.
+    # p99 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.005))] - xs[np.argmin(np.abs(cdf - 0.005))])* sd.value
+    # p95 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.025))] - xs[np.argmin(np.abs(cdf - 0.025))])* sd.value
+    # p90 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.05))] - xs[np.argmin(np.abs(cdf - 0.05))])* sd.value
+    # p80 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.1))] - xs[np.argmin(np.abs(cdf - 0.1))])* sd.value
+    # p60 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.2))] - xs[np.argmin(np.abs(cdf - 0.2))])* sd.value
 
     m = np.sum(xs * pdf * dv)
     v = np.sum( (xs-m)**2 * pdf * dv )
     sigma = np.sqrt(v)
 
-    # xs_new = np.arange(line_region.value[0], line_region[1].value, dv) / sd.value
-    # norm = np.sum(integrand(xs_new) * dv)
-    # pdf = integrand(xs_new) / norm
-    # m2 = np.sum(xs_new * pdf * dv)
-    # v2 = np.sum( (xs_new-m2)**2 * pdf * dv )
-    # sigma2 = np.sqrt(v2)
+    flux_line = integrand(xs)
+    xs_wav = doppler2wave(xs*sd,w0)
+    flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs_wav.value)
 
-    # xs_new = np.arange(md - 10000.0, md + 10000, dv) / sd.value
-    # norm = np.sum(integrand(xs_new) * dv)
-    # pdf = integrand(xs_new) / norm
-    # m3= np.sum(xs_new * pdf * dv)
-    # v3 = np.sum( (xs_new-m3)**2 * pdf * dv )
-    # sigma3 = np.sqrt(v3)
+    f = (flux_line + flux_bkgd) / flux_bkgd
 
-    # print 'Mean: {}'.format(m * sd.value)
-
-    # """
-    # This is working, but for Lorentzian the second moment is not defined.
-    # It dies off much less quickly than the Gaussian so the sigma is much
-    # larger. I therefore need to think of the range in which I calcualte
-    # sigma
-    # """
-
-    print plot_title, (root2 - root1)* sd.value, sigma * sd.value, p99, p95, p90, p80, p60
-
-    # print '{0} {1:.2f} {2:.2f} {3:.2f} {4} {5} {6} {7} {8} {9:.2f} {10:.2f}'.format(plot_title,
-    #                                                                                 func_center * sd.value,
-    #                                                                                 (root2 - root1)* sd.value,
-    #                                                                                 md * sd.value,
-    #                                                                                 p99,
-    #                                                                                 p95,
-    #                                                                                 p90,
-    #                                                                                 p80,
-    #                                                                                 p60,
-    #                                                                                 m*sd.value,
-    #                                                                                 sigma*sd.value)
-
-    # print 'peak_civ = {0:.2f}*(u.km/u.s),'.format(func_center * sd.value)
-    # print 'fwhm_civ = {0:.2f}*(u.km/u.s),'.format((root2 - root1) * sd.value)
-    # print 'median_civ = {0:.2f}*(u.km/u.s),'.format(md * sd.value)
-    # print 'sigma_civ = {0:.2f}*(u.km/u.s),'.format(sigma * sd.value)
-    # print 'chired_civ = {0:.2f},'.format(out.redchi)
+    eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
+    eqw = np.nansum(eqw)
+ 
+    print plot_title, '{0:.2f},'.format((root2 - root1)*sd.value), '{0:.2f},'.format(sigma*sd.value), '{0:.2f},'.format(md*sd.value), '{0:.2f},'.format(func_center*sd.value), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
 
 
-    # # Equivalent width
-    # xs = np.arange(vdat.min().value, vdat.max().value, dv) / sd.value
+    if save_dir is not None:
 
-    # flux_line = integrand(xs)
-    # xs_wav = doppler2wave(xs*sd,w0)
-    # flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs_wav.value)
+        with open(os.path.join(save_dir, 'fit.txt'), 'a') as f:
+            f.write('\n \n')
+            f.write('Peak: {0:.2f} km/s \n'.format(func_center*sd.value))
+            f.write('FWHM: {0:.2f} km/s \n'.format((root2 - root1)*sd.value))
+            f.write('Median: {0:.2f} km/s \n'.format(md*sd.value))
+            f.write('Sigma: {0:.2f} km/s \n'.format(sigma*sd.value))
+            f.write('Reduced chi-squared: {0:.2f} \n'.format(out.redchi))
+            f.write('EQW: {0:.2f} A \n'.format(eqw))      
 
-    # f = (flux_line + flux_bkgd) / flux_bkgd
-
-    # eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
-    # print 'eqw_civ = {0:.2f},'.format(np.nansum(eqw))
+        my_line_props = line_props(plot_title, func_center*sd.value, (root2 - root1)*sd.value, md*sd.value, sigma*sd.value, out.redchi, eqw)  
+        param_file = os.path.join(save_dir, 'line_props.txt')
+        parfile = open(param_file, 'w')
+        pickle.dump(my_line_props, parfile, -1)
+        parfile.close()
 
     # """
     # Calculate S/N ratio per resolution element
@@ -730,14 +741,14 @@ def fit_line(wav,
                  plot_savefig = plot_savefig,
                  save_dir = save_dir,
                  maskout = maskout,
-                 red_shelf = red_shelf,
                  z=z,
                  w0=w0,
                  continuum_region=continuum_region,
                  fitting_region=fitting_region,
                  plot_region=plot_region,
                  plot_title=plot_title,
-                 line_region=line_region)
+                 line_region=line_region,
+                 mask_negflux=mask_negflux)
 
     return None
 
