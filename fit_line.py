@@ -23,6 +23,8 @@ from scipy.stats import norm
 from scipy.ndimage.filters import median_filter
 from palettable.colorbrewer.qualitative import Set2_5
 from time import gmtime, strftime
+from astropy.cosmology import WMAP9 as cosmoWMAP
+import math
 
 # Simple mouse click function to store coordinates
 def onclick(event):
@@ -374,7 +376,8 @@ def fit_line(wav,
              save_dir=None,
              bkgd_median=True,
              fitting_method='leastsq',
-             mask_negflux = True):
+             mask_negflux = True,
+             mono_lum_wav = 5100 * u.AA):
 
     """
     Fiting and continuum regions given in rest frame wavelengths with
@@ -477,6 +480,22 @@ def fit_line(wav,
     if verbose:
         print fit_report(bkgdpars)
 
+
+    ####################################################################################################################
+    """
+    Calculate flux at wavelength mono_lum_wav
+    """
+
+    # Not sure this works very well. Need to decide what most accurate way of getting monochromatic luminosity is. 
+
+    # Be careful with 1e18 normalisation. Should normalise inside of rather than outside script!!  
+    # mono_flux = bkgdmod.eval(params=bkgdpars, x=[mono_lum_wav.value])[0] / 1.e18 * (u.erg / u.cm / u.cm / u.s / u.AA)
+    # lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
+    # mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav 
+    
+    # print 'Monochomatic luminosity at {0} = {1}'.format(mono_lum_wav, np.log10(mono_lum.value)) 
+
+    ######################################################################################################################
 
     # subtract continuum, define region for fitting
     xdat = wav[fitting]
