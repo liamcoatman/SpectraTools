@@ -19,7 +19,7 @@ import numpy.ma as ma
 import matplotlib.pyplot as plt
 import os
 import cPickle as pickle
-from spectra.fit_line import wave2doppler, resid, doppler2wave
+from SpectraTools.fit_line import wave2doppler, resid, doppler2wave
 from scipy.interpolate import interp1d
 import math
 from scipy import integrate, optimize
