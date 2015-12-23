@@ -22,20 +22,23 @@ import matplotlib.pyplot as plt
 from scipy import integrate, optimize
 import os
 import cPickle as pickle
+from palettable.colorbrewer.qualitative import Set2_5
 
-def resid(p,x,model,data=None,sigma=None):
+def resid(p=None, x=None, model=None, data=None, sigma=None, **kwargs):
 
-        mod = model.eval( params=p, x=x )
+    mod = model.eval(params=p, x=x, **kwargs)
+    
+    if data is not None:
+        resids = mod - data
 
-        if data is not None:
-            resids = mod - data
-            if sigma is not None:
-                weighted = np.sqrt(resids ** 2 / sigma ** 2)
-                return weighted
-            else:
-                return resids
+        if sigma is not None:
+            weighted = np.sqrt(resids ** 2 / sigma ** 2)
+            
+            return weighted
         else:
-            return mod
+            return resids
+    else:
+        return mod
 
 def wave2doppler(w, w0):
 
@@ -58,25 +61,30 @@ def doppler2wave(v, w0):
     return w_equiv
 
 
-
 def fit_line_errors(wav,
+                    dw,
                     flux,
                     err,
-                    z=0.0,
+                    z=0,
                     w0=6564.89*u.AA,
-                    velocity_shift=0.0*(u.km / u.s),
                     continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
                     fitting_region=[6400,6800]*u.AA,
-                    plot_region=[6000,7000]*u.AA,
-                    nGaussians=0,
-                    nLorentzians=1,
+                    plot_region=[5700,7400]*u.AA,
+                    nGaussians=1,
+                    nLorentzians=0,
+                    line_region=[6400,6800]*u.AA,
                     maskout=None,
                     verbose=True,
                     plot=True,
-                    plot_savefig='something.png',
+                    save_dir=None,
                     plot_title='',
-                    save_dir=None):
-
+                    plot_savefig='figure.png',
+                    bkgd_median=False,
+                    fitting_method='leastsq',
+                    mask_negflux=False, 
+                    mono_lum_wav = 5100*u.AA,
+                    fit_model = 'MultiGauss',
+                    subtract_fe = False):
 
 
     """
@@ -91,59 +99,98 @@ def fit_line_errors(wav,
     """
     n_samples = 5000
 
-    with open(os.path.join('/data/lc585/WHT_20150331/fit_errors_2',plot_title+'_Ha.dat'), 'w') as f:
-        f.write('Name Centroid FWHM Median p99 p95 p90 p80 p60 Mean Sigma EQW \n')
-
-    # print 'Warning: Renormalising!'
-    flux = flux * 1e18
-    err = err * 1e18
+    with open(os.path.join('/data/lc585/WHT_20150331/fit_errors_3',plot_title+'_Ha.dat'), 'w') as f:
+        f.write('Name Centroid FWHM Median Mean Sigma EQW \n')
 
     # Transform to quasar rest-frame
     wav =  wav / (1.0 + z)
     wav = wav*u.AA
+    dw = dw / (1.0 + z)
+
+    # Normalise spectrum
+    spec_norm = 1.0 / np.median(flux)
+    flux = flux * spec_norm 
+    err = err * spec_norm  
 
     flux_array = np.zeros((len(flux), n_samples))
     for i in range(len(flux)):
         flux_array[i,:] = np.random.normal(flux[i], np.abs(err[i]), n_samples)
 
-    # Check if continuum is given in wavelength or doppler units
-    if continuum_region[0].unit == (u.km/u.s):
-        continuum_region[0] = doppler2wave(continuum_region[0], w0)
-    if continuum_region[1].unit == (u.km/u.s):
-        continuum_region[1] = doppler2wave(continuum_region[1], w0)
-
-    # Fit to median
-    blue_inds = (wav > continuum_region[0][0]) & (wav < continuum_region[0][1])
-    red_inds = (wav > continuum_region[1][0]) & (wav < continuum_region[1][1])
-
-    blue_flux, red_flux = flux[blue_inds], flux[red_inds]
-    blue_err, red_err = err[blue_inds], err[red_inds]
-    blue_wav, red_wav = wav[blue_inds], wav[red_inds]
-
-    blue_flux_array = flux_array[blue_inds]
-    red_flux_array =  flux_array[red_inds]
-
-
-    xdat_bkgd = np.array( [continuum_region[0].mean().value, continuum_region[1].mean().value] )
-    ydat_bkgd = np.array( [np.median(blue_flux_array,axis=0), np.median(red_flux_array,axis=0) ]).T
-
+    # index of the region we want to fit
     if fitting_region.unit == (u.km/u.s):
         fitting_region = doppler2wave(fitting_region, w0)
 
     fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
 
+    # index of region for continuum fit 
+    if continuum_region[0].unit == (u.km/u.s):
+        continuum_region[0] = doppler2wave(continuum_region[0], w0)
+    if continuum_region[1].unit == (u.km/u.s):
+        continuum_region[1] = doppler2wave(continuum_region[1], w0)
+
+    blue_inds = (wav > continuum_region[0][0]) & (wav < continuum_region[0][1])
+    red_inds = (wav > continuum_region[1][0]) & (wav < continuum_region[1][1])
+
+    xdat_blue = wav[blue_inds]
+    yerr_blue = err[blue_inds]
+    vdat_blue = wave2doppler(xdat_blue, w0)
+
+    xdat_red = wav[red_inds]
+    yerr_red = err[red_inds]
+    vdat_red = wave2doppler(xdat_red, w0)
+
+    blue_flux_array = flux_array[blue_inds]
+    red_flux_array =  flux_array[red_inds]
+
+    if maskout is not None:
+
+        mask_blue = np.array([True] * len(xdat_blue))
+        mask_red = np.array([True] * len(xdat_red))
+
+        if maskout.unit == (u.km/u.s):
+            
+            for item in maskout:
+                mask_blue[(vdat_blue > item[0]) & (vdat_blue < item[1])] = False
+                mask_red[(vdat_red > item[0]) & (vdat_red < item[1])] = False
+
+        elif maskout.unit == (u.AA):
+
+            for item in maskout:
+                mask_blue[(xdat_blue > (item[0] / (1.0 + z))) & (xdat_blue < (item[1] / (1.0 + z)))] = False
+                mask_red[(xdat_red > (item[0] / (1.0 + z))) & (xdat_red < (item[1] / (1.0 + z)))] = False
+
+        else:
+            print "Units must be km/s or angstrom"
+
+        xdat_blue = xdat_blue[mask_blue]
+        yerr_blue = yerr_blue[mask_blue]
+        vdat_blue = vdat_blue[mask_blue]
+        
+        xdat_red = xdat_red[mask_red]
+        yerr_red = yerr_red[mask_red]
+        vdat_red = vdat_red[mask_red]
+
+        blue_flux_array = blue_flux_array[mask_blue]
+        red_flux_array = red_flux_array[mask_red]
+
+    if bkgd_median is True:
+
+        xdat_bkgd = np.array( [xdat_blue.mean().value, xdat_red.mean().value] )
+        ydat_bkgd = np.array( [np.median(blue_flux_array,axis=0), np.median(red_flux_array,axis=0) ]).T
+  
+
+    if bkgd_median is False:
+
+        xdat_bkgd = np.concatenate((xdat_blue.value, xdat_red.value))
+        ydat_bkgd = np.concatenate((blue_flux_array, red_flux_array))
+        yerr_bkgd = np.concatenate((yerr_blue, yerr_red))
+
+
     xdat_fit = wav[fitting]
     ydat_fit = flux[fitting]
     yerr_fit = err[fitting]
-
     flux_array_fit = flux_array[fitting]
-
-    # Transform to doppler shift
     vdat_fit = wave2doppler(xdat_fit, w0)
-
-    # Add velocity shift
-    vdat_fit = vdat_fit - velocity_shift
-
 
     if maskout is not None:
 
@@ -159,17 +206,18 @@ def fit_line_errors(wav,
 
             mask = np.array([True] * len(vdat_fit))
             for item in maskout:
-                vlims = wave2doppler(item / (1.0 + z), w0) - velocity_shift
+                vlims = wave2doppler(item / (1.0 + z), w0)
                 print 'Not fitting between {0} ({1}) and {2} ({3})'.format(item[0], vlims[0], item[1], vlims[1])
                 mask[(xdat_fit > (item[0] / (1.0 + z))) & (xdat_fit < (item[1] / (1.0 + z)))] = False
 
         else:
             print "Units must be km/s or angstrom"
 
+        
         vdat_fit = vdat_fit[mask]
-        ydat_fit = ydat_fit[mask]
         yerr_fit = yerr_fit[mask]
         xdat_fit = xdat_fit[mask]
+        ydat_fit = ydat_fit[mask]
 
         flux_array_fit = flux_array_fit[mask]
 
@@ -181,8 +229,8 @@ def fit_line_errors(wav,
         fit.set_xticklabels( () )
         residuals = fig.add_subplot(3,1,2)
 
-        blue_cont = wave2doppler(continuum_region[0], w0) - velocity_shift
-        red_cont = wave2doppler(continuum_region[1], w0) - velocity_shift
+        blue_cont = wave2doppler(continuum_region[0], w0)
+        red_cont = wave2doppler(continuum_region[1], w0) 
 
         fit.axvspan(blue_cont.value[0], blue_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
         fit.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
@@ -191,11 +239,11 @@ def fit_line_errors(wav,
         residuals.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
 
         # Mark fitting region
-        fr = wave2doppler(fitting_region, w0) - velocity_shift
+        fr = wave2doppler(fitting_region, w0)
 
         # Mask out regions
         xdat_masking = np.arange(xdat_fit.min().value, xdat_fit.max().value, 0.05)*(u.AA)
-        vdat_masking = wave2doppler(xdat_masking, w0) - velocity_shift
+        vdat_masking = wave2doppler(xdat_masking, w0) 
 
         mask = (vdat_masking.value < fr.value[0]) | (vdat_masking.value > fr.value[1])
 
@@ -218,8 +266,8 @@ def fit_line_errors(wav,
         vdat1_masking[mask] = ma.masked
 
         for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
-            fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), color=sns.color_palette('deep')[4], alpha=0.4)
-            residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), color=sns.color_palette('deep')[4], alpha=0.4)
+            fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), color='moccasin', alpha=0.4)
+            residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), color='moccasin', alpha=0.4)
 
         fit.set_ylabel(r'F$_\lambda$', fontsize=12)
         residuals.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=12)
@@ -229,175 +277,147 @@ def fit_line_errors(wav,
             plot_region = doppler2wave(plot_region, w0)
 
         plot_region_inds = (wav > plot_region[0]) & (wav < plot_region[1])
-        plotting_limits = wave2doppler(plot_region, w0) - velocity_shift
+        plotting_limits = wave2doppler(plot_region, w0) 
         fit.set_xlim(plotting_limits[0].value, plotting_limits[1].value)
         residuals.set_xlim(fit.get_xlim())
 
     for k in range(n_samples):
 
-        # fit power-law to continuum region
         bkgdmod = PowerLawModel()
         bkgdpars = bkgdmod.make_params()
         bkgdpars['exponent'].value = 1.0
-        bkgdpars['amplitude'].value = 1.0
+        bkgdpars['amplitude'].value = 1.0 / 5000.0  
 
-        out = minimize(resid,
-                       bkgdpars,
-                       args=(xdat_bkgd, bkgdmod, ydat_bkgd[k]),
-                       method='nelder')
+        if bkgd_median is True:
+ 
+            out = minimize(resid,
+                           bkgdpars,
+                           kws={'x':xdat_bkgd, 'model':bkgdmod, 'data':ydat_bkgd[k,:]},
+                           method='leastsq')
 
-        out = minimize(resid,
-                       bkgdpars,
-                       args=(xdat_bkgd, bkgdmod, ydat_bkgd[k]),
-                       method='leastsq')
+        if bkgd_median is False:
+
+            out = minimize(resid,
+                           bkgdpars,
+                           kws={'x':xdat_bkgd, 'model':bkgdmod, 'data':ydat_bkgd[:,k], 'sigma':yerr_bkgd},
+                           method='leastsq')    
 
         if verbose:
             print fit_report(bkgdpars)
 
 
         # subtract continuum, define region for fitting
-        ydat_fit_bkgdsub = ydat_fit - resid(bkgdpars, xdat_fit.value, bkgdmod)
-        flux_array_fit_bkgdsub = flux_array_fit - resid(bkgdpars, xdat_fit.value, bkgdmod).reshape(len(ydat_fit),1)
+        ydat_fit_bkgdsub = ydat_fit - resid(p=bkgdpars, x=xdat_fit.value, model=bkgdmod)
+        flux_array_fit_bkgdsub = flux_array_fit - resid(p=bkgdpars, x=xdat_fit.value, model=bkgdmod).reshape(len(ydat_fit),1)
 
+        # Make model 
         bkgd = ConstantModel()
         mod = bkgd
         pars = bkgd.make_params()
-
+        
         # A bit unnessesary, but I need a way to do += in the loop below
         pars['c'].value = 0.0
         pars['c'].vary = False
 
-
         for i in range(nGaussians):
             gmod = GaussianModel(prefix='g{}_'.format(i))
             mod += gmod
-            pars += gmod.guess(ydat_fit, x=vdat_fit.value)
-
-        for i in range (nLorentzians):
-            lmod = LorentzianModel(prefix='l{}_'.format(i))
-            mod += lmod
-            pars += lmod.guess(ydat_fit, x=vdat_fit.value)
-
+            pars += gmod.guess(ydat_fit_bkgdsub, x=vdat_fit.value)
+               
         for i in range(nGaussians):
             pars['g{}_center'.format(i)].value = 0.0
             pars['g{}_center'.format(i)].min = -5000.0
             pars['g{}_center'.format(i)].max = 5000.0
             pars['g{}_amplitude'.format(i)].min = 0.0
-            pars['g{}_sigma'.format(i)].min = 400.0
+            #pars['g{}_sigma'.format(i)].min = 1000.0
             pars['g{}_sigma'.format(i)].max = 10000.0
-
-        for i in range(nLorentzians):
-            pars['l{}_center'.format(i)].value = 0.0
-            pars['l{}_center'.format(i)].min = -10000.0
-            pars['l{}_center'.format(i)].max = 10000.0
-            pars['l{}_amplitude'.format(i)].min = 0.0
-
-        # For Ha
+        
         if nGaussians == 2:
             pars['g1_center'].set(expr = 'g0_center')
         if nGaussians == 3:
             pars['g1_center'].set(expr = 'g0_center')
             pars['g2_center'].set(expr = 'g0_center')
 
-        flux_array_fit_bkgdsub[:,k][flux_array_fit_bkgdsub[:,k] < 0.0] = 0.0
 
-        out = minimize(resid,
+        # Remove negative flux values which can mess up fit 
+        if mask_negflux:
+    
+            posflux = (flux_array_fit_bkgdsub[:,k] > 0.0) 
+
+            xdat_fit_posflux = xdat_fit[posflux] 
+            ydat_fit_bkgdsub_posflux = ydat_fit_bkgdsub[posflux] 
+            yerr_fit_posflux = yerr_fit[posflux]
+            vdat_fit_posflux = vdat_fit[posflux] 
+    
+            flux_array_fit_bkgdsub_posflux = flux_array_fit_bkgdsub[posflux,k]
+
+            out = minimize(resid,
                        pars,
-                       args=(np.asarray(vdat_fit), mod, flux_array_fit_bkgdsub[:,k], yerr_fit),
-                       method ='nelder')
+                       args=(np.asarray(vdat_fit_posflux), mod, flux_array_fit_bkgdsub_posflux, yerr_fit_posflux),
+                       method = fitting_method)
 
-        out = minimize(resid,
-                       pars,
-                       args=(np.asarray(vdat_fit), mod, flux_array_fit_bkgdsub[:,k], yerr_fit),
-                       method ='leastsq')
+        else: 
 
+            out = minimize(resid,
+                           pars,
+                           args=(np.asarray(vdat_fit), mod, flux_array_fit_bkgdsub[:,k], yerr_fit),
+                           method = fitting_method)
 
-        # print fit_report(pars)
-        # print out.redchi
-        # Calculate FWHM of distribution
-
+        # Calculate stats 
         integrand = lambda x: mod.eval(params=pars, x=np.array(x))
-        func_center = optimize.fmin(lambda x: -integrand(x) , 0, disp=False)[0]
-
-        try:
-
-            half_max = mod.eval(params=pars, x=func_center) / 2.0
-            root1 = optimize.brentq(lambda x: integrand(x) - half_max, vdat_fit.min().value, func_center)
-            root2 = optimize.brentq(lambda x: integrand(x) - half_max, func_center, vdat_fit.max().value)
-
-        except ValueError as e:
-            print e
-
-            root1, root2 = np.nan, np.nan
-
-        # print 'FWHM: {}'.format(root2 - root1)
-
-        dv = 1.0
-
-        xs = np.arange(func_center - 10000.0, func_center + 10000.0, dv)
-        # xs = np.arange(vdat_fit.min().value, vdat_fit.max().value, dv)
-        #xs = np.arange(-3e4, 3e4, dv)
-
-        norm = integrate.quad(integrand, vdat_fit.min().value, vdat_fit.max().value)[0]
+    
+        # Calculate FWHM of distribution
+        if line_region.unit == u.AA:
+            line_region = wave2doppler(line_region, w0)
+    
+        dv = 1.0 # i think if this was anything else might need to change intergration.
+        xs = np.arange(line_region.value[0], line_region[1].value, dv) 
+    
+        norm = np.sum(integrand(xs) * dv)
         pdf = integrand(xs) / norm
         cdf = np.cumsum(pdf)
         cdf_r = np.cumsum(pdf[::-1])[::-1] # reverse cumsum
-
+    
+        func_center = xs[np.argmax(pdf)] 
+       
+        half_max = np.max(pdf) / 2.0
+    
+        i = 0
+        while pdf[i] < half_max:
+            i+=1
+    
+        root1 = xs[i]
+    
+        i = 0
+        while pdf[-i] < half_max:
+            i+=1
+    
+        root2 = xs[-i]
+    
         md = xs[np.argmin( np.abs( cdf - 0.5))]
-        # print 'Median: {}'.format(md)
-
-
-        # Not sure this would work if median far from zero but probably would never happen.
-        p99 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.005))] - xs[np.argmin(np.abs(cdf - 0.005))])
-        p95 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.025))] - xs[np.argmin(np.abs(cdf - 0.025))])
-        p90 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.05))] - xs[np.argmin(np.abs(cdf - 0.05))])
-        p80 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.1))] - xs[np.argmin(np.abs(cdf - 0.1))])
-        p60 = np.abs(xs[np.argmin(np.abs(cdf_r - 0.2))] - xs[np.argmin(np.abs(cdf - 0.2))])
-
-        # print '99%: {}'.format(p99)
-        # print '95%: {}'.format(p95)
-        # print '90%: {}'.format(p90)
-        # print '80%: {}'.format(p80)
-        # print '60%: {}'.format(p60)
-
+    
         m = np.sum(xs * pdf * dv)
-        # print 'Mean: {}'.format(m)
-
-        """
-        This is working, but for Lorentzian the second moment is not defined.
-        It dies off much less quickly than the Gaussian so the sigma is much
-        larger. I therefore need to think of the range in which I calcualte
-        sigma
-        """
-
+    
         v = np.sum( (xs-m)**2 * pdf * dv )
         sd = np.sqrt(v)
-        # print 'Second moment: {}'.format(sd)
-
-        # print 'chi-squred: {0}, dof: {1}'.format(out.chisqr, out.nfree)
-
+    
         # Equivalent width
-        xs = np.arange(func_center - 10000.0, func_center + 10000.0, dv)
         flux_line = integrand(xs)
-        xs_wav = doppler2wave(xs*(u.km/u.s),w0)
+        xs_wav = doppler2wave(xs*(u.km/u.s), w0)
         flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs_wav.value)
         f = (flux_line + flux_bkgd) / flux_bkgd
         eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
         eqw = np.nansum(eqw)
+   
 
-        with open(os.path.join('/data/lc585/WHT_20150331/fit_errors_2',plot_title+'_Ha.dat'), 'a') as f:
-            f.write('{0} {1:.2f} {2:.2f} {3:.2f} {4} {5} {6} {7} {8} {9:.2f} {10:.2f} {11:.3f}\n'.format(plot_title,
-                                                                                                         func_center,
-                                                                                                         root2 - root1,
-                                                                                                         md,
-                                                                                                         p99,
-                                                                                                         p95,
-                                                                                                         p90,
-                                                                                                         p80,
-                                                                                                         p60,
-                                                                                                         m,
-                                                                                                         sd,
-                                                                                                         eqw))
+        with open(os.path.join('/data/lc585/WHT_20150331/fit_errors_3',plot_title+'_Ha.dat'), 'a') as f:
+            f.write('{0} {1:.2f} {2:.2f} {3:.2f} {4:.2f} {5:.2f} {6:.3f}\n'.format(plot_title,
+                                                                                   func_center,
+                                                                                   root2 - root1,
+                                                                                   md,                                                                                                    
+                                                                                   m,
+                                                                                   sd,
+                                                                                   eqw))
 
         print k
 

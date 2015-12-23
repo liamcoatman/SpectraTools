@@ -27,6 +27,21 @@ from scipy.stats import norm
 from palettable.colorbrewer.qualitative import Set2_5
 from time import gmtime, strftime
 
+# Simple mouse click function to store coordinates
+def onclick(event):
+
+    global ix
+    
+    ix = event.xdata
+
+    coords.append(ix)
+
+    if len(coords) % 2 == 0:
+        print '[{0:.0f}, {1:.0f}]'.format(coords[-2], coords[-1])  
+        # fig.canvas.mpl_disconnect(cid)
+        
+    return None 
+
 class line_props(object):
     
     def __init__(self, 
@@ -338,11 +353,15 @@ def plot_fit(wav=None,
 
     fig.tight_layout()
 
+    # Call click func
+    global coords
+    coords = [] 
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+
     if plot_savefig is not None:
-        fig = fig.savefig(os.path.join(save_dir,plot_savefig))
+        fig.savefig(os.path.join(save_dir,plot_savefig))
 
-    plt.show()
-
+    plt.show(1)
     plt.close()
 
     return None
@@ -676,8 +695,14 @@ def fit_line(wav,
     eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
     eqw = np.nansum(eqw)
  
-    print plot_title, '{0:.2f},'.format((root2 - root1)*sd.value), '{0:.2f},'.format(sigma*sd.value), '{0:.2f},'.format(md*sd.value), '{0:.2f},'.format(func_center*sd.value), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
-
+    # print plot_title, '{0:.2f},'.format((root2 - root1)*sd.value), '{0:.2f},'.format(sigma*sd.value), '{0:.2f},'.format(md*sd.value), '{0:.2f},'.format(func_center*sd.value), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
+    print plot_title 
+    print 'peak_civ = {0:.2f}*(u.km/u.s),'.format(func_center*sd.value)
+    print 'fwhm_civ = {0:.2f}*(u.km/u.s),'.format((root2 - root1)*sd.value)
+    print 'median_civ = {0:.2f}*(u.km/u.s),'.format(md*sd.value)
+    print 'sigma_civ = {0:.2f}*(u.km/u.s),'.format(sigma*sd.value)
+    print 'chired_civ = {0:.2f},'.format(out.redchi)
+    print 'eqw_civ = {0:.2f}*u.AA,'.format(eqw)
 
     if save_dir is not None:
 
