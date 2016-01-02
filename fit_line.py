@@ -27,6 +27,7 @@ from astropy.cosmology import WMAP9 as cosmoWMAP
 import math
 from astropy.convolution import Gaussian1DKernel, convolve
 from scipy.interpolate import interp1d 
+from os.path import expanduser
 
 # Simple mouse click function to store coordinates
 def onclick(event):
@@ -62,7 +63,12 @@ class line_props(object):
         self.redchi = redchi
         self.eqw = eqw 
       
-def resid(p=None, x=None, model=None, data=None, sigma=None, **kwargs):
+def resid(p=None, 
+          x=None, 
+          model=None, 
+          data=None, 
+          sigma=None, 
+          **kwargs):
 
     mod = model.eval(params=p, x=x, **kwargs)
     
@@ -71,7 +77,7 @@ def resid(p=None, x=None, model=None, data=None, sigma=None, **kwargs):
 
         if sigma is not None:
             weighted = np.sqrt(resids ** 2 / sigma ** 2)
-            
+
             return weighted
         else:
             return resids
@@ -116,7 +122,8 @@ def plot_fit(wav=None,
              fitting_region=[6400,6800]*u.AA,
              plot_region=None,
              line_region=[-10000,10000]*(u.km/u.s),
-             mask_negflux = True):
+             mask_negflux = True,
+             fit_model='MultiGauss'):
 
 
     if plot_region.unit == (u.km/u.s):
@@ -233,6 +240,7 @@ def plot_fit(wav=None,
     vdat1_masking = ma.array(vdat_masking.value)
     vdat1_masking[mask] = ma.masked 
 
+
     for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
         fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='powderblue')
         residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='powderblue')
@@ -246,7 +254,12 @@ def plot_fit(wav=None,
 
     # residuals.errorbar(vdat.value, (ydat - resid(pars, vdat.value, mod)) / yerr, yerr=1, linestyle='', alpha=0.4)
     # residuals.plot(vdat.value, (ydat - resid(pars, vdat.value, mod)) / yerr, color='black', lw=1)
-    residuals.scatter(vdat.value, (ydat - resid(pars, vdat.value, mod)) / yerr, alpha=0.9, edgecolor='None', s=15, facecolor='black')
+    residuals.scatter(vdat.value, 
+                     (ydat - resid(pars, vdat.value, mod)) / yerr, 
+                     alpha=0.9, 
+                     edgecolor='None', 
+                     s=15, 
+                     facecolor='black')
     # residuals.plot(vdat.value, median_filter((ydat - resid(pars, vdat.value, mod)) / yerr, 3.0), color='black')
 
     residuals.axhline(0.0, color='black', linestyle='--')
@@ -255,41 +268,253 @@ def plot_fit(wav=None,
     residuals.set_xlim(fit.get_xlim())
 
     # plot model components
-    i, j = 0, 0
-    for key, value in pars.valuesdict().iteritems():
-        if key.startswith('g'):
-            i += 1
-        if key.startswith('l'):
-            j += 1
 
-    ngaussians, nlorentzians = int(float(i) / 4.0), int(float(j) / 4.0)
-
-    if ngaussians > 1:
-
-        for i in range(ngaussians):
-            comp_mod = GaussianModel()
-            comp_p = comp_mod.make_params()
-
-            for key, v in comp_p.valuesdict().iteritems():
-                comp_p[key].value = pars['g' + str(i) + '_' + key].value
-
-            fit.plot( np.sort(vdat.value), comp_mod.eval(comp_p, x=np.sort(vdat.value)) )
-
-    if nlorentzians > 1:
-
-        for i in range(nlorentzians):
-            comp_mod = LorentzianModel()
-            comp_p = comp_mod.make_params()
-
-            for key, v in comp_p.valuesdict().iteritems():
-                comp_p[key].value = pars['l' + str(i) + '_' + key].value
-
-            fit.plot( np.sort(vdat.value), comp_mod.eval(comp_p, x=np.sort(vdat.value)) )
-
-
-    #################################################
+    if fit_model == 'MultiGauss':
+    
+        i, j = 0, 0
+        for key, value in pars.valuesdict().iteritems():
+            if key.startswith('g'):
+                i += 1
+            if key.startswith('l'):
+                j += 1
+    
+        ngaussians, nlorentzians = int(float(i) / 4.0), int(float(j) / 4.0)
+    
+        if ngaussians > 1:
+    
+            for i in range(ngaussians):
+                comp_mod = GaussianModel()
+                comp_p = comp_mod.make_params()
+    
+                for key, v in comp_p.valuesdict().iteritems():
+                    comp_p[key].value = pars['g' + str(i) + '_' + key].value
+    
+                fit.plot( np.sort(vdat.value), comp_mod.eval(comp_p, x=np.sort(vdat.value)) )
+    
+        if nlorentzians > 1:
+    
+            for i in range(nlorentzians):
+                comp_mod = LorentzianModel()
+                comp_p = comp_mod.make_params()
+    
+                for key, v in comp_p.valuesdict().iteritems():
+                    comp_p[key].value = pars['l' + str(i) + '_' + key].value
+    
+                fit.plot( np.sort(vdat.value), comp_mod.eval(comp_p, x=np.sort(vdat.value)) )
+    
 
     
+
+    if fit_model == 'Hb': 
+ 
+
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['oiii_5007_n_center'].value
+        p['sigma'].value = pars['oiii_5007_n_sigma'].value
+        p['amplitude'].value = pars['oiii_5007_n_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='red',
+                 linestyle='--')
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['oiii_4959_n_center'].value
+        p['sigma'].value = pars['oiii_4959_n_sigma'].value
+        p['amplitude'].value = pars['oiii_4959_n_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='blue',
+                 linestyle='--')        
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['oiii_5007_b_center'].value
+        p['sigma'].value = pars['oiii_5007_b_sigma'].value
+        p['amplitude'].value = pars['oiii_5007_b_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='red',
+                 linestyle='-')       
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['oiii_4959_b_center'].value
+        p['sigma'].value = pars['oiii_4959_b_sigma'].value
+        p['amplitude'].value = pars['oiii_4959_b_amplitude'].value   
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='blue',
+                 linestyle='-')             
+
+
+        i = 0
+        for key, value in pars.valuesdict().iteritems():
+            if key.startswith('hb_b'):
+                i += 1
+                
+        nGaussians = int(float(i) / 4.0) 
+
+        for i in range(nGaussians):
+
+            g = GaussianModel()
+            p = g.make_params()
+
+            p['center'].value = pars['hb_b_{}_center'.format(i)].value
+            p['sigma'].value = pars['hb_b_{}_sigma'.format(i)].value
+            p['amplitude'].value = pars['hb_b_{}_amplitude'.format(i)].value  
+    
+            fit.plot(np.sort(vdat.value), 
+                     g.eval(p, x=np.sort(vdat.value)),
+                     c='orange')  
+
+        mod_broad_hb = ConstantModel()
+
+        for i in range(nGaussians):
+            mod_broad_hb += GaussianModel(prefix='hb_b_{}_'.format(i))  
+
+        pars_broad_hb = mod_broad_hb.make_params()
+       
+        pars_broad_hb['c'].value = 0.0
+       
+        for key, value in pars.valuesdict().iteritems():
+            if key.startswith('hb_b_'):
+                pars_broad_hb[key].value = value   
+          
+        
+        fit.plot(np.sort(vdat.value), 
+                 mod_broad_hb.eval(pars_broad_hb, x=np.sort(vdat.value)),
+                 c='black',
+                 linestyle='--',
+                 lw=2)                          
+    
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'] = pars['hb_n_center']
+        p['sigma'] = pars['hb_n_sigma']
+        p['amplitude'] = pars['hb_n_amplitude']   
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='orange',
+                 linestyle='--')                    
+
+    if fit_model == 'Ha': 
+
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['ha_n_center'].value
+        p['sigma'].value = pars['ha_n_sigma'].value
+        p['amplitude'].value = pars['ha_n_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='red',
+                 linestyle='--')
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['nii_6548_n_center'].value
+        p['sigma'].value = pars['nii_6548_n_sigma'].value
+        p['amplitude'].value = pars['nii_6548_n_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='red',
+                 linestyle='--')
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['nii_6584_n_center'].value
+        p['sigma'].value = pars['nii_6584_n_sigma'].value
+        p['amplitude'].value = pars['nii_6584_n_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='red',
+                 linestyle='--')
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['sii_6717_n_center'].value
+        p['sigma'].value = pars['sii_6717_n_sigma'].value
+        p['amplitude'].value = pars['sii_6717_n_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='red',
+                 linestyle='--')      
+                 
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['sii_6731_n_center'].value
+        p['sigma'].value = pars['sii_6731_n_sigma'].value
+        p['amplitude'].value = pars['sii_6731_n_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='red',
+                 linestyle='--') 
+
+        
+        i = 0
+        for key, value in pars.valuesdict().iteritems():
+            if key.startswith('ha_b'):
+                i += 1
+                
+        nGaussians = int(float(i) / 4.0) 
+
+        for i in range(nGaussians):
+
+            g = GaussianModel()
+            p = g.make_params()
+
+            p['center'].value = pars['ha_b_{}_center'.format(i)].value
+            p['sigma'].value = pars['ha_b_{}_sigma'.format(i)].value
+            p['amplitude'].value = pars['ha_b_{}_amplitude'.format(i)].value  
+    
+            fit.plot(np.sort(vdat.value), 
+                     g.eval(p, x=np.sort(vdat.value)),
+                     c='orange')  
+
+        mod_broad_ha = ConstantModel()
+
+        for i in range(nGaussians):
+            mod_broad_ha += GaussianModel(prefix='ha_b_{}_'.format(i))  
+
+        pars_broad_ha = mod_broad_ha.make_params()
+       
+        pars_broad_ha['c'].value = 0.0
+       
+        for key, value in pars.valuesdict().iteritems():
+            if key.startswith('ha_b_'):
+                pars_broad_ha[key].value = value   
+          
+        
+        fit.plot(np.sort(vdat.value), 
+                 mod_broad_ha.eval(pars_broad_ha, x=np.sort(vdat.value)),
+                 c='black',
+                 linestyle='--',
+                 lw=2)                          
+    
+      
     eb.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.5, color='grey')
     eb.plot(np.sort(vdat.value), resid(pars, np.sort(vdat.value), mod), color='black', lw=2)
     eb.set_xlim(fit.get_xlim())
@@ -385,7 +610,10 @@ def fit_line(wav,
              mask_negflux = True,
              mono_lum_wav = 5100 * u.AA,
              fit_model='MultiGauss',
-             subtract_fe=False):
+             subtract_fe=False,
+             fe_FWHM=50*u.AA,
+             fe_FWHM_vary=False):
+
 
     """
     Fiting and continuum regions given in rest frame wavelengths with
@@ -394,6 +622,9 @@ def fit_line(wav,
     Maskout is given in terms of doppler shift
 
     """
+
+
+    home_dir = expanduser("~")
 
     # Transform to quasar rest-frame
     wav =  wav / (1.0 + z)
@@ -421,7 +652,6 @@ def fit_line(wav,
     if continuum_region[1].unit == (u.km/u.s):
         continuum_region[1] = doppler2wave(continuum_region[1], w0)
 
-
     ################################################################################
     """
     Optical FeII template
@@ -441,33 +671,63 @@ def fit_line(wav,
 
     if subtract_fe is True: 
 
-        fname = '/home/lc585/SpectraTools/irontemplate.dat'
+        fname = os.path.join(home_dir,'SpectraTools/irontemplate.dat')
         fe_wav, fe_flux = np.genfromtxt(fname, unpack=True)
         fe_wav = 10**fe_wav * u.AA 
         fe_flux = fe_flux / np.median(fe_flux)
-        fe_flux_interp = interp1d(fe_wav, 
-                                  fe_flux, 
-                                  bounds_error=False, 
-                                  fill_value=0.0)
-        
+
+        # I'm sure I could be smarter about this, but since I give the S.D.
+        # in pixels I need to have a regular number of A per pixel 
+
+        f = interp1d(fe_wav.value, fe_flux)
+        fe_wav_new = np.arange(fe_wav.value.min(), fe_wav.value.max(), 2) 
+        fe_flux_new = f(fe_wav_new)
+        fe_wav_new = fe_wav_new*u.AA
+
         def PseudoContinuum(x, 
                             amplitude, 
                             exponent, 
                             fe_norm, 
-                            fe_flux_interp):
-        
-            return fe_norm * fe_flux_interp(x) + amplitude*x**exponent 
+                            fe_wav,
+                            fe_flux,
+                            fe_sd):
+         
+            gauss = Gaussian1DKernel(stddev=fe_sd)
+
+            z = convolve(fe_flux, gauss)
+            
+            f = interp1d(fe_wav, 
+                         z,
+                         bounds_error=False,
+                         fill_value=0.0)
+
+            return fe_norm * f(x) + amplitude*x**exponent 
+
         
         bkgdmod = Model(PseudoContinuum, 
-                        param_names=['amplitude','exponent','fe_norm'], 
+                        param_names=['amplitude','exponent','fe_norm','fe_sd'], 
                         independent_vars=['x']) 
     
 
         bkgdpars = bkgdmod.make_params() 
-        bkgdpars['fe_norm'].value = 0.1
-        bkgdpars['exponent'].value = 0.0
-        bkgdpars['amplitude'].value = 1.0 / 5000.0  
+        bkgdpars['exponent'].value = 1.0
+        bkgdpars['amplitude'].value = 1.0 / 5000.0 
+        bkgdpars['fe_norm'].value = 0.05 
+
+        # If haven't calculate Fe FWHM from Ha fit then use typical value
+        if fe_FWHM is None:
+            fe_FWHM = 90*u.AA
+        
+        # 2.35 is to convert from FWHM to standard devitation. 
+        # 2 is because we have 2 A per pixel. 
+
+        bkgdpars['fe_sd'].value = fe_FWHM.value / 2.35 / 2  
+        bkgdpars['fe_sd'].vary = fe_FWHM_vary 
+
+        bkgdpars['fe_norm'].min = 0.0
+        bkgdpars['fe_sd'].min = 1.0 
     
+
     elif subtract_fe is False:
 
         bkgdmod = PowerLawModel()
@@ -512,34 +772,44 @@ def fit_line(wav,
         else:
             print "Units must be km/s or angstrom"
 
-        xdat_blue = xdat_blue[mask_blue]
-        ydat_blue = ydat_blue[mask_blue]
-        yerr_blue = yerr_blue[mask_blue]
-        vdat_blue = vdat_blue[mask_blue]
-        xdat_red = xdat_red[mask_red]
-        ydat_red = ydat_red[mask_red]
-        yerr_red = yerr_red[mask_red]
-        vdat_red = vdat_red[mask_red]
-    
+        if mask_blue.size > 0:
+
+            xdat_blue = xdat_blue[mask_blue]
+            ydat_blue = ydat_blue[mask_blue]
+            yerr_blue = yerr_blue[mask_blue]
+            vdat_blue = vdat_blue[mask_blue]
+
+        if mask_red.size > 0:
+
+            xdat_red = xdat_red[mask_red]
+            ydat_red = ydat_red[mask_red]
+            yerr_red = yerr_red[mask_red]
+            vdat_red = vdat_red[mask_red]
+
+
     if bkgd_median is True:
 
         xdat_cont = np.array( [np.median(xdat_blue.value), np.median(xdat_red.value)] )
         ydat_cont = np.array( [np.median(ydat_blue), np.median(ydat_red)] )
 
         if subtract_fe is True:
-
-            resid(p=bkgdpars, x=xdat_cont, model=bkgdmod, sigma=None, fe_flux_interp=fe_flux_interp)
     
             out = minimize(resid,
                            bkgdpars,
-                           kws={'x':xdat_cont, 'model':bkgdmod, 'data':ydat_cont, 'fe_flux_interp':fe_flux_interp},
+                           kws={'x':xdat_cont, 
+                                'model':bkgdmod, 
+                                'data':ydat_cont, 
+                                'fe_wav':fe_wav.value,
+                                'fe_flux':fe_flux},
                            method='leastsq')
 
         elif subtract_fe is False:
 
             out = minimize(resid,
                            bkgdpars,
-                           kws={'x':xdat_cont, 'model':bkgdmod, 'data':ydat_cont},
+                           kws={'x':xdat_cont, 
+                                'model':bkgdmod, 
+                                'data':ydat_cont},
                            method='leastsq')
 
     
@@ -549,23 +819,53 @@ def fit_line(wav,
         ydat_cont = np.concatenate((ydat_blue, ydat_red))
         yerr_cont = np.concatenate((yerr_blue, yerr_red))
 
+        # Messes up fit if have negative/zero weights 
+        good_pix = (yerr_cont > 0.0)
+
+        xdat_cont = xdat_cont[good_pix]
+        ydat_cont = ydat_cont[good_pix]
+        yerr_cont = yerr_cont[good_pix]
+
         if subtract_fe is True:
 
             out = minimize(resid,
                            bkgdpars,
-                           kws={'x':xdat_cont.value, 'model':bkgdmod, 'data':ydat_cont, 'sigma':yerr_cont, 'fe_flux_interp':fe_flux_interp},
+                           kws={'x':xdat_cont.value, 
+                                'model':bkgdmod, 
+                                'data':ydat_cont, 
+                                'err':yerr_cont, 
+                                'fe_wav':fe_wav.value,
+                                'fe_flux':fe_flux},
                            method='leastsq') 
 
         elif subtract_fe is False: 
             
             out = minimize(resid,
                            bkgdpars,
-                           kws={'x':xdat_cont.value, 'model':bkgdmod, 'data':ydat_cont, 'sigma':yerr_cont},
+                           kws={'x':xdat_cont.value, 
+                                'model':bkgdmod, 
+                                'data':ydat_cont},
                            method='leastsq') 
 
 
     if verbose:
         print fit_report(bkgdpars)
+
+    if fit_model == 'Hb':
+
+       
+        fig, ax = plt.subplots()
+        ax.errorbar(xdat_cont.value, ydat_cont, yerr=yerr_cont, linestyle='', alpha=0.5, color='grey')
+        ax.plot(xdat_cont.value, 
+                resid(p=bkgdpars, 
+                      x=xdat_cont.value, 
+                      model=bkgdmod, 
+                      fe_wav=fe_wav.value, 
+                      fe_flux=fe_flux), 
+                color='black', 
+                lw=2)
+    
+        plt.show() 
 
 
     ####################################################################################################################
@@ -586,12 +886,21 @@ def fit_line(wav,
 
     # subtract continuum, define region for fitting
     xdat = wav[fitting]
-    ydat = flux[fitting] - resid(bkgdpars, wav[fitting].value, bkgdmod)
     yerr = err[fitting]
-
-    # Transform to doppler shift
     vdat = wave2doppler(xdat, w0)
 
+    if subtract_fe is True:
+        ydat = flux[fitting] - resid(p=bkgdpars, 
+                                     x=xdat.value, 
+                                     model=bkgdmod, 
+                                     fe_wav=fe_wav.value, 
+                                     fe_flux=fe_flux)
+    
+    if subtract_fe is False:
+        ydat = flux[fitting] -  resid(p=bkgdpars, 
+                                      x=xdat.value, 
+                                      model=bkgdmod)
+    
     """
     Remember that this is to velocity shifted array
 
@@ -647,19 +956,103 @@ def fit_line(wav,
             #pars['g{}_sigma'.format(i)].min = 1000.0
             pars['g{}_sigma'.format(i)].max = 10000.0
         
-        if nGaussians == 2:
-            pars['g1_center'].set(expr = 'g0_center')
-        if nGaussians == 3:
-            pars['g1_center'].set(expr = 'g0_center')
-            pars['g2_center'].set(expr = 'g0_center')
+        # if nGaussians == 2:
+        #     pars['g1_center'].set(expr = 'g0_center')
+        # if nGaussians == 3:
+        #     pars['g1_center'].set(expr = 'g0_center')
+        #     pars['g2_center'].set(expr = 'g0_center')
+
 
     elif fit_model == 'Ha':
 
         """
-        Implement the Shen+15/11 fitting procedure, with narrow Ha/NeII
-        """ 
+        Implement the Shen+15/11 fitting procedure
+        The narrow components of Hα, [NII]λλ6548,6584, [SII]λλ6717,6731 are each fit with a single Gaussian. 
+        Their velocity offsets from the systemic redshift and line widths are constrained to be the same
+        The relative flux ratio of the two [NII] components is fixed to 2.96 - which way round is this? 
+        We impose an upper limit on the narrow line FWHM < 1200 km/s 
+        The broad Hα component is modelled in two different ways: 
+        a) a single Gaussian with a FWHM > 1200 km/s; 
+        b) multiple Gaussians with up to three Gaussians, each with a FWHM >1200 km/s. 
+        The second method yields similar results to the fits with a truncated Gaussian-Hermite function. 
+        During the fitting, all lines are restricted to be emission lines (i.e., positive flux)
 
-        pass 
+        Also fit Boroson and Green iron template 
+
+        """
+
+        mod = GaussianModel(prefix='ha_n_')  
+
+        mod += GaussianModel(prefix='nii_6548_n_')
+
+        mod += GaussianModel(prefix='nii_6584_n_')
+
+        mod += GaussianModel(prefix='sii_6717_n_')
+
+        mod += GaussianModel(prefix='sii_6731_n_')
+
+
+        for i in range(nGaussians):
+
+            mod += GaussianModel(prefix='ha_b_{}_'.format(i))  
+
+        pars = mod.make_params() 
+
+        pars['nii_6548_n_amplitude'].value = 1000.0
+        pars['nii_6584_n_amplitude'].value = 1000.0
+        pars['sii_6717_n_amplitude'].value = 1000.0 
+        pars['sii_6731_n_amplitude'].value = 1000.0 
+        pars['ha_n_amplitude'].value = 1000.0  
+        for i in range(nGaussians):
+            pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
+
+        pars['nii_6548_n_center'].value = wave2doppler(6548*u.AA, w0).value 
+        pars['nii_6584_n_center'].value = wave2doppler(6584*u.AA, w0).value 
+        pars['sii_6717_n_center'].value = wave2doppler(6717*u.AA, w0).value 
+        pars['sii_6731_n_center'].value = wave2doppler(6731*u.AA, w0).value 
+        pars['ha_n_center'].value = 100.0    
+        for i in range(nGaussians): 
+            pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
+            pars['ha_b_{}_center'.format(i)].min = -2000.0  
+            pars['ha_b_{}_center'.format(i)].max = 2000.0  
+
+        pars['nii_6548_n_sigma'].value = 500.0 
+        pars['nii_6584_n_sigma'].value = 500.0 
+        pars['sii_6717_n_sigma'].value = 500.0
+        pars['sii_6731_n_sigma'].value = 500.0
+        pars['ha_n_sigma'].value = 500.0 
+        for i in range(nGaussians): 
+            pars['ha_b_{}_sigma'.format(i)].value = 1200.0
+
+        pars['nii_6548_n_amplitude'].min = 0.0
+        pars['nii_6584_n_amplitude'].min = 0.0
+        pars['sii_6717_n_amplitude'].min = 0.0 
+        pars['sii_6731_n_amplitude'].min = 0.0 
+        pars['ha_n_amplitude'].min = 0.0 
+        for i in range(nGaussians): 
+            pars['ha_b_{}_amplitude'.format(i)].min = 0.0  
+        
+
+        pars['ha_n_center'].min = -2000.0
+        pars['ha_n_center'].max = 2000.0
+
+        pars['sii_6731_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6731*u.AA, w0).value))
+        pars['sii_6717_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6717*u.AA, w0).value))
+        pars['nii_6548_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6548*u.AA, w0).value))
+        pars['nii_6584_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6584*u.AA, w0).value))
+
+        
+        pars['ha_n_sigma'].max = 1000.0 / 2.35 
+        pars['ha_n_sigma'].min = 400.0 / 2.35 
+        pars['nii_6548_n_sigma'].set(expr='ha_n_sigma')
+        pars['nii_6584_n_sigma'].set(expr='ha_n_sigma')
+        pars['sii_6717_n_sigma'].set(expr='ha_n_sigma')
+        pars['sii_6731_n_sigma'].set(expr='ha_n_sigma')
+
+        pars['nii_6548_n_amplitude'].set(expr='0.333*nii_6584_n_amplitude')
+
+        for i in range(nGaussians): 
+            pars['ha_b_{}_sigma'.format(i)].min = 1200.0 / 2.35
 
     elif fit_model == 'Hb':
 
@@ -672,10 +1065,11 @@ def fit_line(wav,
         Model each [OIII] line with Gaussian, one for the core and the other for the blue wing.
         Decide whether to fix flux ratio 3:1
         Velocity offset and FWHM of narrow Hb tied to the core [OIII] components
-        Upper limit of 12000 km/s on the narrow line FWHM
+        Upper limit of 1200 km/s on the narrow line FWHM
         Broad Hb modelled by single gaussian, or up to 3 Gaussians each with FWHM > 1200 km/s
 
-
+        It seams like a = b not the same as b = a, which is annoying. 
+        Need to be careful
 
         """
    
@@ -694,46 +1088,97 @@ def fit_line(wav,
             mod += GaussianModel(prefix='hb_b_{}_'.format(i))  
 
         pars = mod.make_params() 
-        print pars 
 
         pars['oiii_4959_n_amplitude'].value = 1000.0
         pars['oiii_5007_n_amplitude'].value = 1000.0
         pars['oiii_4959_b_amplitude'].value = 1000.0 
         pars['oiii_5007_b_amplitude'].value = 1000.0 
         pars['hb_n_amplitude'].value = 1000.0  
+        for i in range(nGaussians):
+            pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
 
         pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
         pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
         pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
         pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
-        pars['hb_n_center'].value = 0.0         
-
-        pars['oiii_5007_n_center'].set(expr = 'hb_n_center+{}'.format(wave2doppler(5008.239*u.AA, w0).value))
-        pars['oiii_4959_n_center'].set(expr = 'hb_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value))
+        pars['hb_n_center'].value = 0.0    
+        for i in range(nGaussians): 
+            pars['hb_b_{}_center'.format(i)].value = -100.0  
+            pars['hb_b_{}_center'.format(i)].min = -2000.0  
+            pars['hb_b_{}_center'.format(i)].max = 2000.0  
 
         pars['oiii_4959_n_sigma'].value = 500.0 
         pars['oiii_5007_n_sigma'].value = 500.0 
         pars['oiii_4959_b_sigma'].value = 1200.0 
         pars['oiii_5007_b_sigma'].value = 1200.0 
         pars['hb_n_sigma'].value = 500.0 
+        for i in range(nGaussians): 
+            pars['hb_b_{}_sigma'.format(i)].value = 1200.0
+        
 
-        pars['hb_n_sigma'].max = 1200.0
-        pars['oiii_4959_n_sigma'].set(expr='hb_n_sigma')
-        pars['oiii_5007_n_sigma'].set(expr='hb_n_sigma')
+        pars['oiii_4959_n_amplitude'].min = 0.0
+        pars['oiii_5007_n_amplitude'].min = 0.0
+        pars['oiii_4959_b_amplitude'].min = 0.0 
+        pars['oiii_5007_b_amplitude'].min = 0.0 
+        pars['hb_n_amplitude'].min = 0.0 
+        for i in range(nGaussians): 
+            pars['hb_b_{}_amplitude'.format(i)].min = 0.0  
+        
 
-        for i in range(nGaussians):
+        pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 2000.0
+        pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 2000.0
+        pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
+        pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
 
-            pars['hb_b_{}_amplitude'.format(i)].value = 1.0 
-            pars['hb_b_{}_center'.format(i)].value = 0.0  
-            pars['hb_b_{}_sigma'.format(i)].value = 1000.0  
-            pars['hb_b_{}_sigma'.format(i)].min = 1200.0  
+        pars['oiii_5007_n_sigma'].max = 1200.0 / 2.35 
+        pars['oiii_5007_n_sigma'].min = 400.0 / 2.35 
+        pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
+        pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
 
+        pars.add('oiii_5007_b_center_delta') 
+        pars['oiii_5007_b_center_delta'].value = 500.0 
+        pars['oiii_5007_b_center_delta'].min = -1000.0 
+        pars['oiii_5007_b_center_delta'].max = 1000.0
+
+        pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
+
+        pars.add('oiii_4959_b_center_delta') 
+        pars['oiii_4959_b_center_delta'].value = 500.0 
+        pars['oiii_4959_b_center_delta'].min = -1000.0 
+        pars['oiii_4959_b_center_delta'].max = 1000.0
+
+        pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_4959_b_center_delta')
+
+        for i in range(nGaussians): 
+            pars['hb_b_{}_sigma'.format(i)].min = 1200.0 / 2.35
+    
+        pars['oiii_5007_b_sigma'].min = 1200.0 / 2.35 
+        pars['oiii_5007_b_sigma'].max = 6000.0 / 2.35
+        pars['oiii_4959_b_sigma'].set(expr='oiii_5007_b_sigma')
+
+        # Set amplitude of [oiii] broad component less than narrow component 
+        pars.add('oiii_5007_b_amp_delta')
+        pars['oiii_5007_b_amp_delta'].value = 0.1
+        pars['oiii_5007_b_amp_delta'].min = 0.0 
+
+        pars['oiii_5007_b_amplitude'].set(expr='((oiii_5007_n_amplitude/oiii_5007_n_sigma)-oiii_5007_b_amp_delta)*oiii_5007_b_sigma')
+
+        # Set 3:1 [OIII] peak ratio  
+        pars['oiii_4959_n_amplitude'].set(expr='0.3333*oiii_5007_n_amplitude')
+
+        # Also set 3:1 [OIII] peak ratio for broad components 
+        pars.add('oiii_4959_b_amp_delta')   
+        pars['oiii_4959_b_amp_delta'].value = 0.1 
+        pars['oiii_4959_b_amp_delta'].min = 0.0
+
+        pars['oiii_4959_b_amplitude'] .set(expr='oiii_4959_b_sigma*((oiii_5007_b_amplitude/oiii_5007_b_sigma)-oiii_4959_b_amp_delta)/3')
 
 
     if any(y < 0.0 for y in ydat):
         print 'Warning: Negative flux values in fitting region!'
 
     # Remove negative flux values which can mess up fit 
+
     if mask_negflux:
 
         posflux = (ydat > 0.0) 
@@ -743,6 +1188,15 @@ def fit_line(wav,
         yerr = yerr[posflux]
         vdat = vdat[posflux] 
 
+    # Messes up fit if have negative/zero weights 
+    good_pix = (yerr > 0.0)
+
+    xdat = xdat[good_pix]
+    ydat = ydat[good_pix]
+    yerr = yerr[good_pix]
+    vdat = vdat[good_pix]
+
+
     out = minimize(resid,
                    pars,
                    args=(np.asarray(vdat), mod, ydat, yerr),
@@ -750,8 +1204,27 @@ def fit_line(wav,
 
 
     if verbose:
-        print fit_report(pars)
+    
+        if fit_model == 'Hb':
 
+            print fit_report(pars)
+
+            
+
+            # print 'Narrow FWHM = {} km/s'.format(pars['hb_n_fwhm'].value)
+            # print 'OIII Broad FWHM = {} km/s'.format(pars['oiii_5007_b_fwhm'].value)
+            # print 'Hb Broad FWHM = {} km/s'.format(pars['hb_b_0_fwhm'].value)
+            # print 'Hb Broad Center = {} km/s'.format(pars['hb_b_0_center'].value)
+            # print 'OIII Broad 4959 Center = {} km/s'.format(pars['oiii_4959_b_center'].value)
+            # print 'Hb Narrow Center = {} km/s'.format(pars['hb_n_center'].value)
+
+            # print 'oiii_5007_n_center = hb_n_center + 8971.35552363'
+            # print 'oiii_4959_n_center = hb_n_center + 6015.55164216'
+            # print 'oiii_4959_b_center = oiii_5007_b_center - 2955.80388148'
+            # print 'oiii_4959_b_sigma = hb_b_0_sigma + oiii_4959_b_sigma_delta'
+
+        else:
+            print fit_report(pars)
 
     if save_dir is not None:
         
@@ -789,7 +1262,54 @@ def fit_line(wav,
             f.write(fittxt) 
 
     # Calculate stats 
-    integrand = lambda x: mod.eval(params=pars, x=np.array(x))
+
+    if fit_model == 'Hb':
+
+        """
+        Only use broad Hb components to calculate stats 
+        """
+
+        mod_broad_hb = ConstantModel()
+
+        for i in range(nGaussians):
+            mod_broad_hb += GaussianModel(prefix='hb_b_{}_'.format(i))  
+
+        pars_broad_hb = mod_broad_hb.make_params()
+       
+        pars_broad_hb['c'].value = 0.0
+       
+        for key, value in pars.valuesdict().iteritems():
+            if key.startswith('hb_b_'):
+                pars_broad_hb[key].value = value 
+                
+
+        integrand = lambda x: mod_broad_hb.eval(params=pars_broad_hb, x=np.array(x))
+
+    elif fit_model == 'Ha':
+
+        """
+        Only use broad Hb components to calculate stats 
+        """
+
+        mod_broad_ha = ConstantModel()
+
+        for i in range(nGaussians):
+            mod_broad_ha += GaussianModel(prefix='ha_b_{}_'.format(i))  
+
+        pars_broad_ha = mod_broad_ha.make_params()
+       
+        pars_broad_ha['c'].value = 0.0
+       
+        for key, value in pars.valuesdict().iteritems():
+            if key.startswith('ha_b_'):
+                pars_broad_ha[key].value = value 
+                
+
+        integrand = lambda x: mod_broad_ha.eval(params=pars_broad_ha, x=np.array(x))    
+
+    else:
+
+        integrand = lambda x: mod.eval(params=pars, x=np.array(x))
 
     # Calculate FWHM of distribution
     if line_region.unit == u.AA:
@@ -820,7 +1340,7 @@ def fit_line(wav,
     root2 = xs[-i]
 
     md = xs[np.argmin( np.abs( cdf - 0.5))]
-
+ 
     m = np.sum(xs * pdf * dv)
 
     v = np.sum( (xs-m)**2 * pdf * dv )
@@ -829,19 +1349,32 @@ def fit_line(wav,
     # Equivalent width
     flux_line = integrand(xs)
     xs_wav = doppler2wave(xs*(u.km/u.s), w0)
-    flux_bkgd = bkgdmod.eval(params=bkgdpars, x=xs_wav.value)
+ 
+    if subtract_fe is True:
+        flux_bkgd = resid(p=bkgdpars, 
+                          x=xs_wav.value, 
+                          model=bkgdmod, 
+                          fe_wav=fe_wav.value, 
+                          fe_flux=fe_flux)
+    
+    if subtract_fe is False:
+        flux_bkgd = resid(p=bkgdpars, 
+                          x=xs_wav.value, 
+                          model=bkgdmod)
+    
+
     f = (flux_line + flux_bkgd) / flux_bkgd
     eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
     eqw = np.nansum(eqw)
 
-    # print plot_title, '{0:.2f},'.format(root2 - root1), '{0:.2f},'.format(sd), '{0:.2f},'.format(md), '{0:.2f},'.format(func_center), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
-    print plot_title 
-    print 'peak_ha = {0:.2f}*(u.km/u.s),'.format(func_center)
-    print 'fwhm_ha = {0:.2f}*(u.km/u.s),'.format(root2 - root1)
-    print 'median_ha = {0:.2f}*(u.km/u.s),'.format(md)
-    print 'sigma_ha = {0:.2f}*(u.km/u.s),'.format(sd)
-    print 'chired_ha = {0:.2f},'.format(out.redchi)
-    print 'eqw_ha = {0:.2f}*u.AA,'.format(eqw)
+    print plot_title, '{0:.2f},'.format(root2 - root1), '{0:.2f},'.format(sd), '{0:.2f},'.format(md), '{0:.2f},'.format(func_center), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
+    # print plot_title 
+    # print 'peak_ha = {0:.2f}*(u.km/u.s),'.format(func_center)
+    # print 'fwhm_ha = {0:.2f}*(u.km/u.s),'.format(root2 - root1)
+    # print 'median_ha = {0:.2f}*(u.km/u.s),'.format(md)
+    # print 'sigma_ha = {0:.2f}*(u.km/u.s),'.format(sd)
+    # print 'chired_ha = {0:.2f},'.format(out.redchi)
+    # print 'eqw_ha = {0:.2f}*u.AA,'.format(eqw)
 
     if save_dir is not None:
 
@@ -894,8 +1427,21 @@ def fit_line(wav,
 
 
     if plot:
+
+        if subtract_fe is True:
+            flux_plot = flux - resid(p=bkgdpars, 
+                                     x=wav.value, 
+                                     model=bkgdmod, 
+                                     fe_wav=fe_wav.value, 
+                                     fe_flux=fe_flux)
+        
+        if subtract_fe is False:
+            flux_plot = flux - resid(p=bkgdpars, 
+                                     x=wav.value, 
+                                     model=bkgdmod)
+
         plot_fit(wav=wav,
-                 flux = flux - resid(bkgdpars, wav.value, bkgdmod),
+                 flux = flux_plot,
                  err=err,
                  pars=pars,
                  mod=mod,
@@ -910,7 +1456,8 @@ def fit_line(wav,
                  plot_region=plot_region,
                  plot_title=plot_title,
                  line_region=line_region,
-                 mask_negflux = mask_negflux)
+                 mask_negflux = mask_negflux,
+                 fit_model=fit_model)
 
 
     return None 
