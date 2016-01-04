@@ -894,7 +894,7 @@ def fit_line(wav,
                                     'fe_flux':fe_flux},
                                method='leastsq') 
     
-                
+                print out.message
 
                 fig, ax = plt.subplots()
                 ax.errorbar(xdat_cont.value, ydat_cont, yerr=yerr_cont, linestyle='', alpha=0.5, color='grey')
@@ -910,7 +910,7 @@ def fit_line(wav,
                 global coords
                 coords = [] 
                 cid = fig.canvas.mpl_connect('button_press_event', onclick)
-                
+
                 plt.show(1)
                 plt.close() 
 
