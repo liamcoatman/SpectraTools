@@ -70,6 +70,7 @@ def resid(p=None,
           sigma=None, 
           **kwargs):
 
+    
     mod = model.eval(params=p, x=x, **kwargs)
     
     if data is not None:
@@ -721,7 +722,7 @@ def fit_line(wav,
         # 2 is because we have 2 A per pixel. 
 
         bkgdpars['fe_sd'].value = fe_FWHM.value / 2.35 / 2  
-        bkgdpars['fe_sd'].vary = fe_FWHM_vary 
+        bkgdpars['fe_sd'].vary = False
 
         bkgdpars['fe_norm'].min = 0.0
         bkgdpars['fe_sd'].min = 1.0 
@@ -827,15 +828,92 @@ def fit_line(wav,
 
         if subtract_fe is True:
 
-            out = minimize(resid,
-                           bkgdpars,
-                           kws={'x':xdat_cont.value, 
-                                'model':bkgdmod, 
-                                'data':ydat_cont, 
-                                'err':yerr_cont, 
-                                'fe_wav':fe_wav.value,
-                                'fe_flux':fe_flux},
-                           method='leastsq') 
+            if fe_FWHM_vary:
+
+                """
+                Takes too long to do minimisation
+                so just do coarse brute force
+                """
+
+                fe_sd = [bkgdpars['fe_sd'].value - 0.2*bkgdpars['fe_sd'].value,
+                         bkgdpars['fe_sd'].value,
+                         bkgdpars['fe_sd'].value + 0.2*bkgdpars['fe_sd'].value] 
+
+                out = [] 
+
+                fig, axs = plt.subplots(3,1)
+
+                for i,v in enumerate(fe_sd): 
+
+                    bkgdpars['exponent'].value = 1.0
+                    bkgdpars['amplitude'].value = 1.0 / 5000.0 
+                    bkgdpars['fe_norm'].value = 0.05 
+                    bkgdpars['fe_sd'].value = v 
+
+
+                      
+                    out.append(minimize(resid,
+                                        bkgdpars,
+                                        kws={'x':xdat_cont.value, 
+                                             'model':bkgdmod, 
+                                             'data':ydat_cont, 
+                                             'err':yerr_cont, 
+                                             'fe_wav':fe_wav.value,
+                                             'fe_flux':fe_flux},
+                                        method='leastsq'))
+                    
+                    axs[i].errorbar(xdat_cont.value, 
+                                    ydat_cont, 
+                                    yerr=yerr_cont, 
+                                    linestyle='', 
+                                    alpha=0.5, 
+                                    color='grey')
+
+                    axs[i].plot(xdat_cont.value, 
+                                resid(p=bkgdpars, 
+                                      x=xdat_cont.value, 
+                                      model=bkgdmod, 
+                                      fe_wav=fe_wav.value, 
+                                      fe_flux=fe_flux), 
+                                color='black', 
+                                lw=2)
+
+                    axs[i].set_title('FWHM = {0:.2f}A, chi-sq={1:.2f}'.format(v*2.35*2,out[i].chisqr))
+
+                plt.show() 
+
+            else: 
+
+                out = minimize(resid,
+                               bkgdpars,
+                               kws={'x':xdat_cont.value, 
+                                    'model':bkgdmod, 
+                                    'data':ydat_cont, 
+                                    'err':yerr_cont, 
+                                    'fe_wav':fe_wav.value,
+                                    'fe_flux':fe_flux},
+                               method='leastsq') 
+    
+                
+
+                fig, ax = plt.subplots()
+                ax.errorbar(xdat_cont.value, ydat_cont, yerr=yerr_cont, linestyle='', alpha=0.5, color='grey')
+                ax.plot(xdat_cont.value, 
+                        resid(p=bkgdpars, 
+                              x=xdat_cont.value, 
+                              model=bkgdmod, 
+                              fe_wav=fe_wav.value, 
+                              fe_flux=fe_flux), 
+                        color='black', 
+                        lw=2)
+                
+                global coords
+                coords = [] 
+                cid = fig.canvas.mpl_connect('button_press_event', onclick)
+                
+                plt.show(1)
+                plt.close() 
+
 
         elif subtract_fe is False: 
             
@@ -850,21 +928,7 @@ def fit_line(wav,
     if verbose:
         print fit_report(bkgdpars)
 
-    if subtract_fe is True:
-
-       
-        fig, ax = plt.subplots()
-        ax.errorbar(xdat_cont.value, ydat_cont, yerr=yerr_cont, linestyle='', alpha=0.5, color='grey')
-        ax.plot(xdat_cont.value, 
-                resid(p=bkgdpars, 
-                      x=xdat_cont.value, 
-                      model=bkgdmod, 
-                      fe_wav=fe_wav.value, 
-                      fe_flux=fe_flux), 
-                color='black', 
-                lw=2)
-    
-        plt.show() 
+  
 
 
     ####################################################################################################################
