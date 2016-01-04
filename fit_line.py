@@ -694,10 +694,10 @@ def fit_line(wav,
          
             gauss = Gaussian1DKernel(stddev=fe_sd)
 
-            z = convolve(fe_flux, gauss)
+            z1 = convolve(fe_flux, gauss)
             
             f = interp1d(fe_wav, 
-                         z,
+                         z1,
                          bounds_error=False,
                          fill_value=0.0)
 
@@ -906,7 +906,16 @@ def fit_line(wav,
                               fe_flux=fe_flux), 
                         color='black', 
                         lw=2)
-                
+
+                gauss = Gaussian1DKernel(stddev=bkgdpars['fe_sd'].value)
+                z1 = convolve(fe_flux, gauss)
+                f = interp1d(fe_wav.value, 
+                             z1,
+                             bounds_error=False,
+                             fill_value=0.0)
+                ax.plot(xdat_cont.value, bkgdpars['fe_norm'].value * f(xdat_cont.value), color='red')   
+                ax.plot(xdat_cont.value, bkgdpars['amplitude']*xdat_cont.value**bkgdpars['exponent'], color='blue')   
+
                 global coords
                 coords = [] 
                 cid = fig.canvas.mpl_connect('button_press_event', onclick)
@@ -1267,26 +1276,8 @@ def fit_line(wav,
 
     if verbose:
     
-        if fit_model == 'Hb':
-
-            print fit_report(pars)
-
-            
-
-            # print 'Narrow FWHM = {} km/s'.format(pars['hb_n_fwhm'].value)
-            # print 'OIII Broad FWHM = {} km/s'.format(pars['oiii_5007_b_fwhm'].value)
-            # print 'Hb Broad FWHM = {} km/s'.format(pars['hb_b_0_fwhm'].value)
-            # print 'Hb Broad Center = {} km/s'.format(pars['hb_b_0_center'].value)
-            # print 'OIII Broad 4959 Center = {} km/s'.format(pars['oiii_4959_b_center'].value)
-            # print 'Hb Narrow Center = {} km/s'.format(pars['hb_n_center'].value)
-
-            # print 'oiii_5007_n_center = hb_n_center + 8971.35552363'
-            # print 'oiii_4959_n_center = hb_n_center + 6015.55164216'
-            # print 'oiii_4959_b_center = oiii_5007_b_center - 2955.80388148'
-            # print 'oiii_4959_b_sigma = hb_b_0_sigma + oiii_4959_b_sigma_delta'
-
-        else:
-            print fit_report(pars)
+        print out.message
+        print fit_report(pars)
 
     if save_dir is not None:
         
