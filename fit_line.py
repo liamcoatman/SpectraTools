@@ -240,7 +240,6 @@ def plot_fit(wav=None,
     vdat1_masking = ma.array(vdat_masking.value)
     vdat1_masking[mask] = ma.masked 
 
-
     for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
         fit.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='powderblue')
         residuals.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='powderblue')
@@ -851,7 +850,7 @@ def fit_line(wav,
     if verbose:
         print fit_report(bkgdpars)
 
-    if fit_model == 'Hb':
+    if subtract_fe is True:
 
        
         fig, ax = plt.subplots()
@@ -1107,14 +1106,13 @@ def fit_line(wav,
             pars['hb_b_{}_center'.format(i)].min = -2000.0  
             pars['hb_b_{}_center'.format(i)].max = 2000.0  
 
-        pars['oiii_4959_n_sigma'].value = 500.0 
-        pars['oiii_5007_n_sigma'].value = 500.0 
+        pars['oiii_4959_n_sigma'].value = 800 / 2.35
+        pars['oiii_5007_n_sigma'].value = 800 / 2.35
         pars['oiii_4959_b_sigma'].value = 1200.0 
         pars['oiii_5007_b_sigma'].value = 1200.0 
-        pars['hb_n_sigma'].value = 500.0 
+        pars['hb_n_sigma'].value = 800 / 2.35
         for i in range(nGaussians): 
             pars['hb_b_{}_sigma'.format(i)].value = 1200.0
-        
 
         pars['oiii_4959_n_amplitude'].min = 0.0
         pars['oiii_5007_n_amplitude'].min = 0.0
@@ -1130,22 +1128,22 @@ def fit_line(wav,
         pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
         pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
 
-        pars['oiii_5007_n_sigma'].max = 1200.0 / 2.35 
+        pars['oiii_5007_n_sigma'].max = 900.0 / 2.35 
         pars['oiii_5007_n_sigma'].min = 400.0 / 2.35 
         pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
         pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
 
         pars.add('oiii_5007_b_center_delta') 
         pars['oiii_5007_b_center_delta'].value = 500.0 
-        pars['oiii_5007_b_center_delta'].min = -1000.0 
-        pars['oiii_5007_b_center_delta'].max = 1000.0
+        pars['oiii_5007_b_center_delta'].min = -1500.0 
+        pars['oiii_5007_b_center_delta'].max = 1500.0
 
         pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
 
         pars.add('oiii_4959_b_center_delta') 
         pars['oiii_4959_b_center_delta'].value = 500.0 
-        pars['oiii_4959_b_center_delta'].min = -1000.0 
-        pars['oiii_4959_b_center_delta'].max = 1000.0
+        pars['oiii_4959_b_center_delta'].min = -1500.0 
+        pars['oiii_4959_b_center_delta'].max = 1500.0
 
         pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_4959_b_center_delta')
 
