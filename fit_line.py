@@ -44,6 +44,20 @@ def onclick(event):
         
     return None 
 
+def onclick2(event):
+
+    global ix
+    
+    ix = event.xdata
+
+    coords.append(ix)
+
+    if len(coords) % 4 == 0:
+        print '[[{0:.0f}, {1:.0f}]*u.AA,[{2:.0f}, {3:.0f}]*u.AA]'.format(coords[-4], coords[-3], coords[-2], coords[-1])  
+        # fig.canvas.mpl_disconnect(cid)
+        
+    return None 
+
 class line_props(object):
     
     def __init__(self, 
@@ -850,8 +864,6 @@ def fit_line(wav,
                     bkgdpars['fe_norm'].value = 0.05 
                     bkgdpars['fe_sd'].value = v 
 
-
-                      
                     out.append(minimize(resid,
                                         bkgdpars,
                                         kws={'x':xdat_cont.value, 
@@ -880,6 +892,7 @@ def fit_line(wav,
 
                     axs[i].set_title('FWHM = {0:.2f}A, chi-sq={1:.2f}'.format(v*2.35*2,out[i].chisqr))
 
+
                 plt.show() 
 
             else: 
@@ -896,9 +909,20 @@ def fit_line(wav,
     
                 print out.message
 
-                fig, ax = plt.subplots()
-                ax.errorbar(xdat_cont.value, ydat_cont, yerr=yerr_cont, linestyle='', alpha=0.5, color='grey')
-                ax.plot(xdat_cont.value, 
+                fig, axs = plt.subplots(3,1)
+
+                axs[0].errorbar(wav.value, 
+                            flux, 
+                            yerr=err, 
+                            linestyle='', 
+                            alpha=0.5, 
+                            color='grey')
+
+                axs[1].errorbar(wav.value, 
+                                flux, 
+                                color='grey')
+
+                axs[0].plot(xdat_cont.value, 
                         resid(p=bkgdpars, 
                               x=xdat_cont.value, 
                               model=bkgdmod, 
@@ -907,18 +931,88 @@ def fit_line(wav,
                         color='black', 
                         lw=2)
 
+                axs[1].plot(xdat_cont.value, 
+                        resid(p=bkgdpars, 
+                              x=xdat_cont.value, 
+                              model=bkgdmod, 
+                              fe_wav=fe_wav.value, 
+                              fe_flux=fe_flux), 
+                        color='black', 
+                        lw=2)
+
+
                 gauss = Gaussian1DKernel(stddev=bkgdpars['fe_sd'].value)
+                
                 z1 = convolve(fe_flux, gauss)
+                
                 f = interp1d(fe_wav.value, 
                              z1,
                              bounds_error=False,
                              fill_value=0.0)
-                ax.plot(xdat_cont.value, bkgdpars['fe_norm'].value * f(xdat_cont.value), color='red')   
-                ax.plot(xdat_cont.value, bkgdpars['amplitude']*xdat_cont.value**bkgdpars['exponent'], color='blue')   
+                
+                axs[0].plot(xdat_cont.value, bkgdpars['fe_norm'].value * f(xdat_cont.value), color='red')   
+                
+                axs[0].plot(xdat_cont.value, bkgdpars['amplitude']*xdat_cont.value**bkgdpars['exponent'], color='blue')   
+
+                axs[0].set_xlim(xdat_cont.value.min() - 50.0, xdat_cont.value.max() + 50.0)
+                axs[1].set_xlim(xdat_cont.value.min() - 50.0, xdat_cont.value.max() + 50.0)
+                
+                func_vals = resid(p=bkgdpars, 
+                                  x=xdat_cont.value, 
+                                  model=bkgdmod, 
+                                  fe_wav=fe_wav.value, 
+                                  fe_flux=fe_flux)
+
+                axs[0].set_ylim(func_vals.min() - 3.0*np.std(func_vals), func_vals.max() + 3.0*np.std(func_vals) )
+                axs[1].set_ylim(func_vals.min() - 3.0*np.std(func_vals), func_vals.max() + 3.0*np.std(func_vals) )
+                
+
+                xdat_masking = np.arange(wav.min().value, wav.max().value, 0.05)*(u.AA)
+                vdat_masking = wave2doppler(xdat_masking, w0)
+                
+                mask = (xdat_masking.value < continuum_region[0][0].value) | \
+                       ((xdat_masking.value > continuum_region[0][1].value) &  (xdat_masking.value < continuum_region[1][0].value))  | \
+                       (xdat_masking.value > continuum_region[1][1].value)
+                
+                if maskout is not None:
+                
+                    if maskout.unit == (u.km/u.s):
+                
+                        for item in maskout:
+                            mask = mask | ((vdat_masking.value > item.value[0]) & (vdat_masking.value < item.value[1]))
+                
+                    elif maskout.unit == (u.AA):
+                
+                        for item in maskout:
+                            xmin = item.value[0] / (1.0 + z)
+                            xmax = item.value[1] / (1.0 + z)
+                            mask = mask | ((xdat_masking.value > xmin) & (xdat_masking.value < xmax))
+                
+                
+                vdat1_masking = ma.array(vdat_masking.value)
+                vdat1_masking[mask] = ma.masked 
+
+                for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
+                    axs[0].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                               doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                               alpha=0.4, 
+                               color='powderblue')    
+                    axs[1].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                               doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                               alpha=0.4, 
+                               color='powderblue')    
+
+                    axs[2].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                               doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                               alpha=0.4, 
+                               color='powderblue')    
+
+
+                axs[2].plot(wav.value, flux, color='grey')
 
                 global coords
                 coords = [] 
-                cid = fig.canvas.mpl_connect('button_press_event', onclick)
+                cid = fig.canvas.mpl_connect('button_press_event', onclick2)
 
                 plt.show(1)
                 plt.close() 
