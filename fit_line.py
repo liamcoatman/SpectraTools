@@ -1460,3 +1460,29 @@ def fit_line(wav,
 
     return None 
 
+
+if __name__ == '__main__':
+
+    def gauss(x, *p):
+        A, mu, sigma = p
+        return A*np.exp(-(x-mu)**2/(2.*sigma**2))
+    
+    p0 = [1., 0, 500.0]
+
+    dv = 1 
+    x = np.arange(-10000,10000, dv)
+
+    flux = gauss(x, *p0)
+    
+    norm = np.sum(flux * dv)
+    pdf = flux / norm
+    cdf = np.cumsum(pdf)
+    cdf_r = np.cumsum(pdf[::-1])[::-1] # reverse cumsum
+
+
+    m = np.sum(x * pdf * dv)
+
+    v = np.sum( (x-m)**2 * pdf * dv )
+    sd = np.sqrt(v)
+
+    print sd 
