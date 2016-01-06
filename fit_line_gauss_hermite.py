@@ -126,6 +126,24 @@ def gausshermite(x, p, order):
     if order == 6:
         return h0 + h1 + h2 + h3 + h4 + h5 + h6
 
+def gauss_hermite_component(x, p, order):
+
+    if order == 0:
+        return (p['amp'].value/(np.sqrt(2*math.pi)*p['sig'].value)) * np.exp(-(x-p['cen'].value)**2 /(2*p['sig'].value**2))
+    if order == 1:
+        return np.sqrt(2.0) * x * (p['amp'].value/(np.sqrt(2*math.pi)*p['sig'].value)) * np.exp(-(x-p['cen'].value)**2 /(2*p['sig'].value**2))
+    if order == 2:    
+        return (2.0*x*x - 1.0) / np.sqrt(2.0) * (p['amp'].value/(np.sqrt(2*math.pi)*p['sig'].value)) * np.exp(-(x-p['cen'].value)**2 /(2*p['sig'].value**2))
+    if order == 3:   
+        return x * (2.0*x*x - 3.0) / np.sqrt(3.0) * (p['amp'].value/(np.sqrt(2*math.pi)*p['sig'].value)) * np.exp(-(x-p['cen'].value)**2 /(2*p['sig'].value**2))
+    if order == 4:   
+        return (x*x*(4.0*x*x-12.0)+3.0) / (2.0*np.sqrt(6.0)) * (p['amp'].value/(np.sqrt(2*math.pi)*p['sig'].value)) * np.exp(-(x-p['cen'].value)**2 /(2*p['sig'].value**2))
+    if order == 5:    
+        return (x*(x*x*(4.0*x*x-20.0) + 15.0)) / (2.0*np.sqrt(15.0)) * (p['amp'].value/(np.sqrt(2*math.pi)*p['sig'].value)) * np.exp(-(x-p['cen'].value)**2 /(2*p['sig'].value**2))
+    if order == 6:    
+        return (x*x*(x*x*(8.0*x*x-60.0) + 90.0) - 15.0) / (12.0*np.sqrt(5.0)) * (p['amp'].value/(np.sqrt(2*math.pi)*p['sig'].value)) * np.exp(-(x-p['cen'].value)**2 /(2*p['sig'].value**2))
+
+ 
 def plot_fit(wav=None,
              flux=None,
              err=None,
@@ -268,6 +286,26 @@ def plot_fit(wav=None,
 
     line, = fit.plot(vs, flux_mod, color='black', lw=2)
 
+    #############################################################
+    # Plot components
+    i = 0 
+    
+    while i <= order:
+        
+        p_com = Parameters()
+        p_com['amp'] = pars['amp{}'.format(i)]
+        p_com['cen'] = pars['cen{}'.format(i)]
+        p_com['sig'] = pars['sig{}'.format(i)]
+
+        flux_com = gauss_hermite_component(vs/xscal, p_com, i)
+
+        fit.plot(vs, flux_com, color='gold', lw=1)
+     
+        i += 1 
+
+
+    #############################################################
+
     fit.set_xlim(plotting_limits[0].value, plotting_limits[1].value)
 
     fit.axhline(0, color='black', linestyle='--')
@@ -276,7 +314,7 @@ def plot_fit(wav=None,
     eb.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.5, color='grey')
     eb.plot(vs, flux_mod, color='black', lw=2)
 
-
+     
 
 
     # residuals.errorbar(vdat.value,
@@ -600,6 +638,7 @@ def fit_line(wav,
             else:
                 print key, value
 
+        print out.message 
 
     # Save results
 
@@ -695,14 +734,14 @@ def fit_line(wav,
     eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
     eqw = np.nansum(eqw)
  
-    # print plot_title, '{0:.2f},'.format((root2 - root1)*sd.value), '{0:.2f},'.format(sigma*sd.value), '{0:.2f},'.format(md*sd.value), '{0:.2f},'.format(func_center*sd.value), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
-    print plot_title 
-    print 'peak_civ = {0:.2f}*(u.km/u.s),'.format(func_center*sd.value)
-    print 'fwhm_civ = {0:.2f}*(u.km/u.s),'.format((root2 - root1)*sd.value)
-    print 'median_civ = {0:.2f}*(u.km/u.s),'.format(md*sd.value)
-    print 'sigma_civ = {0:.2f}*(u.km/u.s),'.format(sigma*sd.value)
-    print 'chired_civ = {0:.2f},'.format(out.redchi)
-    print 'eqw_civ = {0:.2f}*u.AA,'.format(eqw)
+    print plot_title, '{0:.2f},'.format((root2 - root1)*sd.value), '{0:.2f},'.format(sigma*sd.value), '{0:.2f},'.format(md*sd.value), '{0:.2f},'.format(func_center*sd.value), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
+    # print plot_title 
+    # print 'peak_civ = {0:.2f}*(u.km/u.s),'.format(func_center*sd.value)
+    # print 'fwhm_civ = {0:.2f}*(u.km/u.s),'.format((root2 - root1)*sd.value)
+    # print 'median_civ = {0:.2f}*(u.km/u.s),'.format(md*sd.value)
+    # print 'sigma_civ = {0:.2f}*(u.km/u.s),'.format(sigma*sd.value)
+    # print 'chired_civ = {0:.2f},'.format(out.redchi)
+    # print 'eqw_civ = {0:.2f}*u.AA,'.format(eqw)
 
     if save_dir is not None:
 
