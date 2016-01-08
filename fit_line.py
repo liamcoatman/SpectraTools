@@ -28,6 +28,8 @@ import math
 from astropy.convolution import Gaussian1DKernel, convolve
 from scipy.interpolate import interp1d 
 from os.path import expanduser
+from scipy.ndimage.filters import median_filter
+from barak import spec
 
 # Simple mouse click function to store coordinates
 def onclick(event):
@@ -315,8 +317,6 @@ def plot_fit(wav=None,
                     comp_p[key].value = pars['l' + str(i) + '_' + key].value
     
                 fit.plot( np.sort(vdat.value), comp_mod.eval(comp_p, x=np.sort(vdat.value)) )
-    
-
     
 
     if fit_model == 'Hb': 
@@ -687,16 +687,14 @@ def fit_line(wav,
 
         fname = os.path.join(home_dir,'SpectraTools/irontemplate.dat')
         fe_wav, fe_flux = np.genfromtxt(fname, unpack=True)
-        fe_wav = 10**fe_wav * u.AA 
+
         fe_flux = fe_flux / np.median(fe_flux)
 
-        # I'm sure I could be smarter about this, but since I give the S.D.
-        # in pixels I need to have a regular number of A per pixel 
-
-        f = interp1d(fe_wav.value, fe_flux)
-        fe_wav_new = np.arange(fe_wav.value.min(), fe_wav.value.max(), 2) 
-        fe_flux_new = f(fe_wav_new)
-        fe_wav_new = fe_wav_new*u.AA
+        # I think this conserves flux so is better than just interpolating 
+        fe_sp = spec.Spectrum(wa=10**fe_wav, fl=fe_flux) 
+        
+        # Rebin to 2A per pixel 
+        fe_sp = fe_sp.rebin(wstart=fe_sp.wa.min(), wend=fe_sp.wa.max(), dw = 2.0)
 
         def PseudoContinuum(x, 
                             amplitude, 
@@ -813,7 +811,7 @@ def fit_line(wav,
                            kws={'x':xdat_cont, 
                                 'model':bkgdmod, 
                                 'data':ydat_cont, 
-                                'fe_wav':fe_wav.value,
+                                'fe_wav':fe_wav_new.value,
                                 'fe_flux':fe_flux},
                            method='leastsq')
 
@@ -870,7 +868,7 @@ def fit_line(wav,
                                              'model':bkgdmod, 
                                              'data':ydat_cont, 
                                              'err':yerr_cont, 
-                                             'fe_wav':fe_wav.value,
+                                             'fe_wav':fe_wav_new.value,
                                              'fe_flux':fe_flux},
                                         method='leastsq'))
                     
@@ -885,7 +883,7 @@ def fit_line(wav,
                                 resid(p=bkgdpars, 
                                       x=xdat_cont.value, 
                                       model=bkgdmod, 
-                                      fe_wav=fe_wav.value, 
+                                      fe_wav=fe_wav_new.value, 
                                       fe_flux=fe_flux), 
                                 color='black', 
                                 lw=2)
@@ -903,7 +901,7 @@ def fit_line(wav,
                                     'model':bkgdmod, 
                                     'data':ydat_cont, 
                                     'err':yerr_cont, 
-                                    'fe_wav':fe_wav.value,
+                                    'fe_wav':fe_wav_new.value,
                                     'fe_flux':fe_flux},
                                method='leastsq') 
     
@@ -919,23 +917,41 @@ def fit_line(wav,
                             color='grey')
 
                 axs[1].errorbar(wav.value, 
-                                flux, 
+                                median_filter(flux,51), 
                                 color='grey')
 
-                axs[0].plot(xdat_cont.value, 
+
+                xdat_plotting = np.arange(xdat_cont.value.min(), xdat_cont.value.max(), 10)
+
+                axs[0].plot(xdat_plotting, 
                         resid(p=bkgdpars, 
-                              x=xdat_cont.value, 
+                              x=xdat_plotting, 
                               model=bkgdmod, 
-                              fe_wav=fe_wav.value, 
+                              fe_wav=fe_wav_new.value, 
                               fe_flux=fe_flux), 
                         color='black', 
                         lw=2)
 
-                axs[1].plot(xdat_cont.value, 
+                axs[1].plot(xdat_plotting, 
                         resid(p=bkgdpars, 
-                              x=xdat_cont.value, 
+                              x=xdat_plotting, 
                               model=bkgdmod, 
-                              fe_wav=fe_wav.value, 
+                              fe_wav=fe_wav_new.value, 
+                              fe_flux=fe_flux), 
+                        color='black', 
+                        lw=2)
+ 
+                newpars = Parameters()
+                newpars.add('amplitude', value=bkgdpars['amplitude'].value)
+                newpars.add('exponent', value=bkgdpars['exponent'].value)
+                newpars.add('fe_norm', value=bkgdpars['fe_norm'].value)
+                newpars.add('fe_sd', value=1.0)
+
+                axs[1].plot(xdat_plotting, 
+                        resid(p=newpars, 
+                              x=xdat_plotting, 
+                              model=bkgdmod, 
+                              fe_wav=fe_wav_new.value, 
                               fe_flux=fe_flux), 
                         color='black', 
                         lw=2)
@@ -945,7 +961,7 @@ def fit_line(wav,
                 
                 z1 = convolve(fe_flux, gauss)
                 
-                f = interp1d(fe_wav.value, 
+                f = interp1d(fe_wav_new.value, 
                              z1,
                              bounds_error=False,
                              fill_value=0.0)
@@ -960,7 +976,7 @@ def fit_line(wav,
                 func_vals = resid(p=bkgdpars, 
                                   x=xdat_cont.value, 
                                   model=bkgdmod, 
-                                  fe_wav=fe_wav.value, 
+                                  fe_wav=fe_wav_new.value, 
                                   fe_flux=fe_flux)
 
                 axs[0].set_ylim(func_vals.min() - 3.0*np.std(func_vals), func_vals.max() + 3.0*np.std(func_vals) )
@@ -1010,6 +1026,15 @@ def fit_line(wav,
 
                 axs[2].plot(wav.value, flux, color='grey')
 
+                axs[2].plot(xdat_cont.value, 
+                        resid(p=bkgdpars, 
+                              x=xdat_cont.value, 
+                              model=bkgdmod, 
+                              fe_wav=fe_wav_new.value, 
+                              fe_flux=fe_flux), 
+                        color='black', 
+                        lw=2)
+
                 global coords
                 coords = [] 
                 cid = fig.canvas.mpl_connect('button_press_event', onclick2)
@@ -1027,6 +1052,7 @@ def fit_line(wav,
                                 'data':ydat_cont},
                            method='leastsq') 
 
+            print out.message 
 
     if verbose:
         print fit_report(bkgdpars)
@@ -1039,14 +1065,25 @@ def fit_line(wav,
     Calculate flux at wavelength mono_lum_wav
     """
 
-    # Not sure this works very well. Need to decide what most accurate way of getting monochromatic luminosity is. 
+    # Calculate just power-law continuum (no Fe)
+    cont_mod = PowerLawModel()
+    cont_pars = cont_mod.make_params()
+    cont_pars['exponent'].value = bkgdpars['exponent'].value
+    cont_pars['amplitude'].value = bkgdpars['amplitude'].value  
 
-    # Be careful with 1e18 normalisation. Should normalise inside of rather than outside script!!  
-    # mono_flux = bkgdmod.eval(params=bkgdpars, x=[mono_lum_wav.value])[0] / 1.e18 * (u.erg / u.cm / u.cm / u.s / u.AA)
-    # lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
-    # mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav 
+    mono_flux = resid(p=cont_pars, 
+                      x=[mono_lum_wav.value], 
+                      model=cont_mod)[0]
+
+   
+    mono_flux = mono_flux / spec_norm
+
+    mono_flux = mono_flux * (u.erg / u.cm / u.cm / u.s / u.AA)
+
+    lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
+
+    mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav 
     
-    # print 'Monochomatic luminosity at {0} = {1}'.format(mono_lum_wav, np.log10(mono_lum.value)) 
 
     ######################################################################################################################
 
@@ -1059,7 +1096,7 @@ def fit_line(wav,
         ydat = flux[fitting] - resid(p=bkgdpars, 
                                      x=xdat.value, 
                                      model=bkgdmod, 
-                                     fe_wav=fe_wav.value, 
+                                     fe_wav=fe_wav_new.value, 
                                      fe_flux=fe_flux)
     
     if subtract_fe is False:
@@ -1388,9 +1425,22 @@ def fit_line(wav,
         pickle.dump(wav, parfile, -1)
         parfile.close()
 
+
+        if subtract_fe is True:
+            flux_dump = flux - resid(p=bkgdpars, 
+                                     x=wav.value, 
+                                     model=bkgdmod, 
+                                     fe_wav=fe_wav.value, 
+                                     fe_flux=fe_flux)
+        
+        if subtract_fe is False:
+            flux_dump = flux - resid(p=bkgdpars, 
+                                     x=wav.value, 
+                                     model=bkgdmod)
+
         flx_file = os.path.join(save_dir, 'flx.txt')
         parfile = open(flx_file, 'wb')
-        pickle.dump(flux - resid(bkgdpars, wav.value, bkgdmod), parfile, -1)
+        pickle.dump(flux_dump, parfile, -1)
         parfile.close()
 
         err_file = os.path.join(save_dir, 'err.txt')
@@ -1515,6 +1565,7 @@ def fit_line(wav,
     eqw = np.nansum(eqw)
 
     print plot_title, '{0:.2f},'.format(root2 - root1), '{0:.2f},'.format(sd), '{0:.2f},'.format(md), '{0:.2f},'.format(func_center), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
+    print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum.value)) 
     # print plot_title 
     # print 'peak_ha = {0:.2f}*(u.km/u.s),'.format(func_center)
     # print 'fwhm_ha = {0:.2f}*(u.km/u.s),'.format(root2 - root1)
@@ -1573,7 +1624,7 @@ def fit_line(wav,
 
 
 
-    if plot:
+    if plot is True:
 
         if subtract_fe is True:
             flux_plot = flux - resid(p=bkgdpars, 
