@@ -26,6 +26,7 @@ from scipy.ndimage.filters import median_filter
 from scipy.stats import norm
 from palettable.colorbrewer.qualitative import Set2_5
 from time import gmtime, strftime
+from astropy.cosmology import WMAP9 as cosmoWMAP
 
 # Simple mouse click function to store coordinates
 def onclick(event):
@@ -422,7 +423,8 @@ def fit_line(wav,
              save_dir=None,
              bkgd_median=True,
              fitting_method='leastsq',
-             mask_negflux=True):
+             mask_negflux=True,
+             mono_lum_wav=1350*u.AA):
 
     """
     Velocity shift added to doppler shift to change zero point (can do if HW10
@@ -438,6 +440,10 @@ def fit_line(wav,
     # Transform to quasar rest-frame
     wav =  wav / (1.0 + z)
     wav = wav*u.AA
+
+    spec_norm = 1.0 / np.median(flux)
+    flux = flux * spec_norm 
+    err = err * spec_norm 
 
     # index of the region we want to fit
     if fitting_region.unit == (u.km/u.s):
@@ -527,6 +533,26 @@ def fit_line(wav,
 
     if verbose:
         print fit_report(bkgdpars)
+
+
+    ####################################################################################################################
+    """
+    Calculate flux at wavelength mono_lum_wav
+    """
+
+ 
+    mono_flux = resid(bkgdpars, [mono_lum_wav.value], bkgdmod)[0]
+
+    mono_flux = mono_flux / spec_norm
+
+    mono_flux = mono_flux * (u.erg / u.cm / u.cm / u.s / u.AA)
+
+    lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
+
+    mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav 
+    
+
+    ######################################################################################################################
 
 
     # subtract continuum, define region for fitting
@@ -735,6 +761,7 @@ def fit_line(wav,
     eqw = np.nansum(eqw)
  
     print plot_title, '{0:.2f},'.format((root2 - root1)*sd.value), '{0:.2f},'.format(sigma*sd.value), '{0:.2f},'.format(md*sd.value), '{0:.2f},'.format(func_center*sd.value), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
+    print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum.value))  
     # print plot_title 
     # print 'peak_civ = {0:.2f}*(u.km/u.s),'.format(func_center*sd.value)
     # print 'fwhm_civ = {0:.2f}*(u.km/u.s),'.format((root2 - root1)*sd.value)
