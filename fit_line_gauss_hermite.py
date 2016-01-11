@@ -144,6 +144,14 @@ def gauss_hermite_component(x, p, order):
     if order == 6:    
         return (x*x*(x*x*(8.0*x*x-60.0) + 90.0) - 15.0) / (12.0*np.sqrt(5.0)) * (p['amp'].value/(np.sqrt(2*math.pi)*p['sig'].value)) * np.exp(-(x-p['cen'].value)**2 /(2*p['sig'].value**2))
 
+def PLModel(amplitude,
+            exponent,
+            x):
+
+    # should probably change this to 1350 when fitting CIV
+    amp = amplitude * 5000.0**(-exponent) 
+
+    return amp*x**exponent 
  
 def plot_fit(wav=None,
              flux=None,
@@ -462,10 +470,13 @@ def fit_line(wav,
     if continuum_region[1].unit == (u.km/u.s):
         continuum_region[1] = doppler2wave(continuum_region[1], w0)
 
-    bkgdmod = PowerLawModel()
+    bkgdmod = Model(PLModel, 
+                    param_names=['amplitude','exponent'], 
+                    independent_vars=['x']) 
+
     bkgdpars = bkgdmod.make_params()
     bkgdpars['exponent'].value = 1.0
-    bkgdpars['amplitude'].value = 1.0
+    bkgdpars['amplitude'].value = 1.0 
 
     blue_inds = (wav > continuum_region[0][0]) & (wav < continuum_region[0][1])
     red_inds = (wav > continuum_region[1][0]) & (wav < continuum_region[1][1])   
@@ -539,8 +550,8 @@ def fit_line(wav,
     """
     Calculate flux at wavelength mono_lum_wav
     """
-
  
+    # import ipdb; ipdb.set_trace()
     mono_flux = resid(bkgdpars, [mono_lum_wav.value], bkgdmod)[0]
 
     mono_flux = mono_flux / spec_norm

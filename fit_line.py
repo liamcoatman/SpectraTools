@@ -763,6 +763,14 @@ def fit_line(wav,
 
         elif subtract_fe is False:
 
+            bkgdmod = Model(PLModel, 
+                            param_names=['amplitude','exponent'], 
+                            independent_vars=['x']) 
+
+            bkgdpars = bkgdmod.make_params()
+            bkgdpars['exponent'].value = 1.0
+            bkgdpars['amplitude'].value = 1.0 
+
             out = minimize(resid,
                            bkgdpars,
                            kws={'x':xdat_cont, 
@@ -820,7 +828,11 @@ def fit_line(wav,
             sp_fe = spec.Spectrum(wa=10**fe_wav, fl=fe_flux)
 
             bkgdmod = Model(PseudoContinuum, 
-                            param_names=['amplitude','exponent','fe_norm','fe_sd','fe_shift'], 
+                            param_names=['amplitude',
+                                         'exponent',
+                                         'fe_norm',
+                                         'fe_sd',
+                                         'fe_shift'], 
                             independent_vars=['x']) 
             
             bkgdpars = bkgdmod.make_params() 
@@ -1015,10 +1027,13 @@ def fit_line(wav,
             ydat_cont = np.concatenate((ydat_blue, ydat_red))
             yerr_cont = np.concatenate((yerr_blue, yerr_red))
 
-            bkgdmod = PowerLawModel()
+            bkgdmod = Model(PLModel, 
+                            param_names=['amplitude','exponent'], 
+                            independent_vars=['x']) 
+
             bkgdpars = bkgdmod.make_params()
             bkgdpars['exponent'].value = 1.0
-            bkgdpars['amplitude'].value = 1.0 / 5000.0  
+            bkgdpars['amplitude'].value = 1.0 
 
             
             out = minimize(resid,
