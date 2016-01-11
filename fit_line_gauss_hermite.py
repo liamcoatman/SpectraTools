@@ -695,14 +695,14 @@ def fit_line(wav,
     eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
     eqw = np.nansum(eqw)
  
-    # print plot_title, '{0:.2f},'.format((root2 - root1)*sd.value), '{0:.2f},'.format(sigma*sd.value), '{0:.2f},'.format(md*sd.value), '{0:.2f},'.format(func_center*sd.value), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
-    print plot_title 
-    print 'peak_civ = {0:.2f}*(u.km/u.s),'.format(func_center*sd.value)
-    print 'fwhm_civ = {0:.2f}*(u.km/u.s),'.format((root2 - root1)*sd.value)
-    print 'median_civ = {0:.2f}*(u.km/u.s),'.format(md*sd.value)
-    print 'sigma_civ = {0:.2f}*(u.km/u.s),'.format(sigma*sd.value)
-    print 'chired_civ = {0:.2f},'.format(out.redchi)
-    print 'eqw_civ = {0:.2f}*u.AA,'.format(eqw)
+    print plot_title, '{0:.2f},'.format((root2 - root1)*sd.value), '{0:.2f},'.format(sigma*sd.value), '{0:.2f},'.format(md*sd.value), '{0:.2f},'.format(func_center*sd.value), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
+    # print plot_title 
+    # print 'peak_civ = {0:.2f}*(u.km/u.s),'.format(func_center*sd.value)
+    # print 'fwhm_civ = {0:.2f}*(u.km/u.s),'.format((root2 - root1)*sd.value)
+    # print 'median_civ = {0:.2f}*(u.km/u.s),'.format(md*sd.value)
+    # print 'sigma_civ = {0:.2f}*(u.km/u.s),'.format(sigma*sd.value)
+    # print 'chired_civ = {0:.2f},'.format(out.redchi)
+    # print 'eqw_civ = {0:.2f}*u.AA,'.format(eqw)
 
     if save_dir is not None:
 
