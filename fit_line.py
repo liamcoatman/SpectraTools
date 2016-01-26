@@ -158,6 +158,69 @@ def PLModel(amplitude,
 
     return amp*x**exponent 
 
+def plot_spec(wav=None,
+              flux=None,
+              plot_savefig=None,
+              plot_title='',
+              save_dir=None,
+              z=0.0,
+              w0=6564.89*u.AA,
+              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
+              fitting_region=[6400,6800]*u.AA,
+              plot_region=None,
+              verbose=True):    
+
+    fig = plt.figure(figsize=(6,4))
+    ax = fig.add_subplot(1,1,1)
+    
+    ax.scatter(wav.value, 
+               flux, 
+               edgecolor='None', 
+               s=15, 
+               alpha=0.9, 
+               facecolor='black')
+
+    if continuum_region[0].unit == (u.km/u.s):
+        continuum_region[0] = doppler2wave(continuum_region[0], w0)
+    if continuum_region[1].unit == (u.km/u.s):
+        continuum_region[1] = doppler2wave(continuum_region[1], w0)
+
+    if fitting_region.unit == (u.km/u.s):
+        fitting_region = doppler2wave(fitting_region, w0)
+
+    ax.axvspan(fitting_region[0].value, 
+               fitting_region[1].value, 
+               alpha=0.4, 
+               color='moccasin')
+       
+    ax.axvspan(continuum_region[0][0].value, 
+               continuum_region[0][1].value, 
+               alpha=0.4, 
+               color='powderblue')
+
+    ax.axvspan(continuum_region[1][0].value, 
+               continuum_region[1][1].value, 
+               alpha=0.4, 
+               color='powderblue')
+
+    ax.set_ylim(np.median(flux) + 3.0*np.std(flux), np.median(flux) - 3.0*np.std(flux))
+
+    ax.set_ylabel(r'F$_\lambda$', fontsize=12)
+    ax.set_xlabel(r'Wavelength [$\AA$]', fontsize=12)
+    
+    fig.tight_layout() 
+    
+    if plot_savefig is not None:
+        fig.savefig(os.path.join(save_dir, plot_savefig))
+
+    if verbose:
+        plt.show(1)
+    
+    plt.close()
+    
+    return None    
+
+
 def plot_fit(wav=None,
              flux=None,
              err=None,
@@ -637,9 +700,9 @@ def plot_fit(wav=None,
         fig.savefig(os.path.join(save_dir, plot_savefig))
 
     if verbose:
-
         plt.show(1)
-        plt.close()
+    
+    plt.close()
 
     return None
 
@@ -672,7 +735,6 @@ def fit_line(wav,
              hb_narrow=True,
              narrow_fwhm=None):
 
-
     """
     Fiting and continuum regions given in rest frame wavelengths with
     astropy angstrom units.
@@ -680,8 +742,7 @@ def fit_line(wav,
     Maskout is given in terms of doppler shift
 
     """
-
-
+    
     home_dir = expanduser("~")
 
     # Transform to quasar rest-frame
@@ -693,8 +754,6 @@ def fit_line(wav,
     spec_norm = 1.0 / np.median(flux)
     flux = flux * spec_norm 
     err = err * spec_norm 
- 
-    
 
     # index of the region we want to fit
     if fitting_region.unit == (u.km/u.s):
@@ -711,11 +770,9 @@ def fit_line(wav,
         continuum_region[0] = doppler2wave(continuum_region[0], w0)
     if continuum_region[1].unit == (u.km/u.s):
         continuum_region[1] = doppler2wave(continuum_region[1], w0)
-
     
     blue_inds = (wav > continuum_region[0][0]) & (wav < continuum_region[0][1])
     red_inds = (wav > continuum_region[1][0]) & (wav < continuum_region[1][1])   
-
     
     xdat_blue = wav[blue_inds]
     ydat_blue = flux[blue_inds]
@@ -779,17 +836,65 @@ def fit_line(wav,
             bkgdpars = bkgdmod.make_params()
             bkgdpars['exponent'].value = 1.0
             bkgdpars['amplitude'].value = 1.0 
+            
+            try:
+                out = minimize(resid,
+                               bkgdpars,
+                               kws={'x':xdat_cont, 
+                                    'model':bkgdmod, 
+                                    'data':ydat_cont},
+                               method='leastsq')
 
-            out = minimize(resid,
-                           bkgdpars,
-                           kws={'x':xdat_cont, 
-                                'model':bkgdmod, 
-                                'data':ydat_cont},
-                           method='leastsq')
+                if verbose:
+                    print out.message  
+                    print fit_report(bkgdpars)
 
-            if verbose:
-                print out.message  
-                print fit_report(bkgdpars)
+            except TypeError as e: 
+
+                print 'Background fit failed because ' + e.args[0] 
+ 
+                fit_out = {'name':plot_title, 
+                           'fwhm':0.0,
+                           'sigma':0.0,
+                           'median':0.0,
+                           'cen':0.0,
+                           'eqw':0.0,
+                           'broad_lum':0.0,
+                           'narrow_fwhm':0.0,
+                           'narrow_lum':0.0,
+                           'oiii_5007_eqw':0.0,
+                           'oiii_5007_lum':0.0,
+                           'oiii_5007_n_lum':0.0,
+                           'oiii_5007_b_lum':0.0,
+                           'oiii_fwhm':0.0,
+                           'oiii_n_fwhm':0.0,
+                           'oiii_b_fwhm':0.0,
+                           'oiii_5007_voff':0.0,
+                           'redchi':0.0,
+                           'snr':0.0,
+                           'monolum':0.0}
+    
+                if save_dir is not None:
+                    if not os.path.exists(save_dir):
+                        os.makedirs(save_dir)
+                    with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+                        f.write('No fit')               
+
+                if plot: 
+                    plot_spec(wav=wav,
+                              flux=flux,
+                              plot_savefig = plot_savefig,
+                              save_dir = save_dir,
+                              z=z,
+                              w0=w0,
+                              continuum_region=continuum_region,
+                              fitting_region=fitting_region,
+                              plot_region=plot_region,
+                              plot_title=plot_title,
+                              verbose=verbose)
+
+            
+                return fit_out 
     
     if bkgd_median is False:
 
@@ -805,6 +910,53 @@ def fit_line(wav,
         xdat_red = xdat_red[good_pix]
         ydat_red = ydat_red[good_pix]
         yerr_red = yerr_red[good_pix]
+
+        if len(xdat_blue) + len(xdat_red) == 0:
+
+            print "No flux in continuum fitting regions" 
+
+            fit_out = {'name':plot_title, 
+                       'fwhm':0.0,
+                       'sigma':0.0,
+                       'median':0.0,
+                       'cen':0.0,
+                       'eqw':0.0,
+                       'broad_lum':0.0,
+                       'narrow_fwhm':0.0,
+                       'narrow_lum':0.0,
+                       'oiii_5007_eqw':0.0,
+                       'oiii_5007_lum':0.0,
+                       'oiii_5007_n_lum':0.0,
+                       'oiii_5007_b_lum':0.0,
+                       'oiii_fwhm':0.0,
+                       'oiii_n_fwhm':0.0,
+                       'oiii_b_fwhm':0.0,
+                       'oiii_5007_voff':0.0,
+                       'redchi':0.0,
+                       'snr':0.0,
+                       'monolum':0.0}
+
+            if save_dir is not None:
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+                with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+                    f.write('No fit')               
+
+            if plot: 
+                 plot_spec(wav=wav,
+                           flux=flux,
+                           plot_savefig = plot_savefig,
+                           save_dir = save_dir,
+                           z=z,
+                           w0=w0,
+                           continuum_region=continuum_region,
+                           fitting_region=fitting_region,
+                           plot_region=plot_region,
+                           plot_title=plot_title,
+                           verbose=verbose)
+
+            return fit_out 
+
 
         if subtract_fe is True:
 
@@ -873,164 +1025,214 @@ def fit_line(wav,
 
             # import ipdb; ipdb.set_trace()
 
-            out = minimize(resid,
-                           bkgdpars,
-                           kws={'x':xdat_cont, 
-                                'model':bkgdmod, 
-                                'data':ydat_cont, 
-                                'sigma':yerr_cont, 
-                                'sp_fe':sp_fe},
-                           method='slsqp')                           
+            try: 
+                out = minimize(resid,
+                               bkgdpars,
+                               kws={'x':xdat_cont, 
+                                    'model':bkgdmod, 
+                                    'data':ydat_cont, 
+                                    'sigma':yerr_cont, 
+                                    'sp_fe':sp_fe},
+                               method='slsqp')                           
 
 
-             
-            if verbose:
-      
-                print out.message, 'chi-squared = {}'.format(out.redchi)
-                print fit_report(bkgdpars)
-                print 'Fe FWHM = {} km/s'.format(bkgdpars['fe_sd'].value * 2.35 * sp_fe.dv)
-            
+                if verbose:
+          
+                    print out.message, 'chi-squared = {}'.format(out.redchi)
+                    print fit_report(bkgdpars)
+                    print 'Fe FWHM = {} km/s'.format(bkgdpars['fe_sd'].value * 2.35 * sp_fe.dv)            
 
-            if plot:
-       
-                """
-                Plotting continuum / iron fit
-                """
-    
-                fig, axs = plt.subplots(4,1)
-    
-                axs[0].errorbar(wav.value, 
-                                flux, 
-                                yerr=err, 
-                                linestyle='', 
-                                alpha=0.5, 
-                                color='grey')
-    
-                axs[1].errorbar(wav.value, 
-                                median_filter(flux,51), 
-                                color='grey')
-    
-    
-                xdat_plotting = np.arange(xdat_cont.min(), xdat_cont.max(), 1)
-    
-                axs[0].plot(xdat_plotting, 
+
+                if plot:
+           
+                    """
+                    Plotting continuum / iron fit
+                    """
+        
+                    fig, axs = plt.subplots(4,1)
+        
+                    axs[0].errorbar(wav.value, 
+                                    flux, 
+                                    yerr=err, 
+                                    linestyle='', 
+                                    alpha=0.5, 
+                                    color='grey')
+        
+                    axs[1].errorbar(wav.value, 
+                                    median_filter(flux,51), 
+                                    color='grey')
+        
+        
+                    xdat_plotting = np.arange(xdat_cont.min(), xdat_cont.max(), 1)
+        
+                    axs[0].plot(xdat_plotting, 
+                                resid(p=bkgdpars, 
+                                      x=xdat_plotting, 
+                                      model=bkgdmod, 
+                                      sp_fe=sp_fe), 
+                                color='black', 
+                                lw=2)
+        
+                    axs[1].plot(xdat_plotting, 
                             resid(p=bkgdpars, 
                                   x=xdat_plotting, 
                                   model=bkgdmod, 
                                   sp_fe=sp_fe), 
                             color='black', 
                             lw=2)
-    
-                axs[1].plot(xdat_plotting, 
-                        resid(p=bkgdpars, 
-                              x=xdat_plotting, 
-                              model=bkgdmod, 
-                              sp_fe=sp_fe), 
-                        color='black', 
-                        lw=2)
-     
-                gauss = Gaussian1DKernel(stddev=bkgdpars['fe_sd'].value)
-            
-                fe_flux = convolve(sp_fe.fl, gauss)
-                fe_flux = np.roll(fe_flux, int(bkgdpars['fe_shift'].value))
-                f = interp1d(sp_fe.wa, fe_flux) 
-                fe_flux = f(xdat_cont)   
-    
-                axs[0].plot(xdat_cont, bkgdpars['fe_norm'].value * fe_flux, color='red')   
+         
+                    gauss = Gaussian1DKernel(stddev=bkgdpars['fe_sd'].value)
                 
-                axs[0].plot(xdat_cont, bkgdpars['amplitude']*xdat_cont**bkgdpars['exponent'], color='blue')   
-    
-                axs[0].set_xlim(xdat_cont.min() - 50.0, xdat_cont.max() + 50.0)
-                axs[1].set_xlim(xdat_cont.min() - 50.0, xdat_cont.max() + 50.0)
-                
-                func_vals = resid(p=bkgdpars, 
+                    fe_flux = convolve(sp_fe.fl, gauss)
+                    fe_flux = np.roll(fe_flux, int(bkgdpars['fe_shift'].value))
+                    f = interp1d(sp_fe.wa, fe_flux) 
+                    fe_flux = f(xdat_cont)   
+        
+                    axs[0].plot(xdat_cont, bkgdpars['fe_norm'].value * fe_flux, color='red')   
+                    
+                    axs[0].plot(xdat_cont, bkgdpars['amplitude']*xdat_cont**bkgdpars['exponent'], color='blue')   
+        
+                    axs[0].set_xlim(xdat_cont.min() - 50.0, xdat_cont.max() + 50.0)
+                    axs[1].set_xlim(xdat_cont.min() - 50.0, xdat_cont.max() + 50.0)
+                    
+                    func_vals = resid(p=bkgdpars, 
+                                      x=xdat_cont, 
+                                      model=bkgdmod, 
+                                      sp_fe=sp_fe)
+        
+                    axs[0].set_ylim(np.median(ydat_cont) - 3.0*np.std(ydat_cont), np.median(ydat_cont) + 3.0*np.std(ydat_cont))
+                    axs[1].set_ylim(axs[0].get_ylim())
+                    
+        
+                    xdat_masking = np.arange(wav.min().value, wav.max().value, 0.05)*(u.AA)
+                    vdat_masking = wave2doppler(xdat_masking, w0)
+                    
+                    mask = (xdat_masking.value < continuum_region[0][0].value) | \
+                           ((xdat_masking.value > continuum_region[0][1].value) &  (xdat_masking.value < continuum_region[1][0].value))  | \
+                           (xdat_masking.value > continuum_region[1][1].value)
+                    
+                    if maskout is not None:
+                    
+                        if maskout.unit == (u.km/u.s):
+                    
+                            for item in maskout:
+                                mask = mask | ((vdat_masking.value > item.value[0]) & (vdat_masking.value < item.value[1]))
+                    
+                        elif maskout.unit == (u.AA):
+                    
+                            for item in maskout:
+                                xmin = item.value[0] 
+                                xmax = item.value[1] 
+                                mask = mask | ((xdat_masking.value > xmin) & (xdat_masking.value < xmax))
+                    
+                    
+                    vdat1_masking = ma.array(vdat_masking.value)
+                    vdat1_masking[mask] = ma.masked 
+        
+                    for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
+                        axs[0].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                                   doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                                   alpha=0.4, 
+                                   color='powderblue')    
+                        axs[1].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                                   doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                                   alpha=0.4, 
+                                   color='powderblue')    
+        
+                        axs[2].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                                   doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                                   alpha=0.4, 
+                                   color='powderblue')    
+                        axs[3].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                                   doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                                   alpha=0.4, 
+                                   color='powderblue')    
+        
+                    axs[2].scatter(xdat_cont, 
+                                  (ydat_cont - resid(p=bkgdpars, 
+                                                x=xdat_cont, 
+                                                model=bkgdmod, 
+                                                sp_fe=sp_fe)) / yerr_cont, 
+                                  alpha=0.9, 
+                                  edgecolor='None', 
+                                  s=15, 
+                                  facecolor='black')
+        
+        
+                    axs[2].axhline(0.0, color='black', linestyle='--')
+                    axs[2].set_xlim(axs[0].get_xlim())
+        
+        
+                    axs[3].plot(wav.value, flux, color='grey')
+        
+                    axs[3].plot(xdat_cont, 
+                            resid(p=bkgdpars, 
                                   x=xdat_cont, 
                                   model=bkgdmod, 
-                                  sp_fe=sp_fe)
-    
-                axs[0].set_ylim(np.median(ydat_cont) - 3.0*np.std(ydat_cont), np.median(ydat_cont) + 3.0*np.std(ydat_cont))
-                axs[1].set_ylim(axs[0].get_ylim())
-                
-    
-                xdat_masking = np.arange(wav.min().value, wav.max().value, 0.05)*(u.AA)
-                vdat_masking = wave2doppler(xdat_masking, w0)
-                
-                mask = (xdat_masking.value < continuum_region[0][0].value) | \
-                       ((xdat_masking.value > continuum_region[0][1].value) &  (xdat_masking.value < continuum_region[1][0].value))  | \
-                       (xdat_masking.value > continuum_region[1][1].value)
-                
-                if maskout is not None:
-                
-                    if maskout.unit == (u.km/u.s):
-                
-                        for item in maskout:
-                            mask = mask | ((vdat_masking.value > item.value[0]) & (vdat_masking.value < item.value[1]))
-                
-                    elif maskout.unit == (u.AA):
-                
-                        for item in maskout:
-                            xmin = item.value[0] 
-                            xmax = item.value[1] 
-                            mask = mask | ((xdat_masking.value > xmin) & (xdat_masking.value < xmax))
-                
-                
-                vdat1_masking = ma.array(vdat_masking.value)
-                vdat1_masking[mask] = ma.masked 
-    
-                for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
-                    axs[0].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
-                               doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
-                               alpha=0.4, 
-                               color='powderblue')    
-                    axs[1].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
-                               doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
-                               alpha=0.4, 
-                               color='powderblue')    
-    
-                    axs[2].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
-                               doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
-                               alpha=0.4, 
-                               color='powderblue')    
-                    axs[3].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
-                               doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
-                               alpha=0.4, 
-                               color='powderblue')    
-    
-                axs[2].scatter(xdat_cont, 
-                              (ydat_cont - resid(p=bkgdpars, 
-                                            x=xdat_cont, 
-                                            model=bkgdmod, 
-                                            sp_fe=sp_fe)) / yerr_cont, 
-                              alpha=0.9, 
-                              edgecolor='None', 
-                              s=15, 
-                              facecolor='black')
-    
-    
-                axs[2].axhline(0.0, color='black', linestyle='--')
-                axs[2].set_xlim(axs[0].get_xlim())
-    
-    
-                axs[3].plot(wav.value, flux, color='grey')
-    
-                axs[3].plot(xdat_cont, 
-                        resid(p=bkgdpars, 
-                              x=xdat_cont, 
-                              model=bkgdmod, 
-                              sp_fe=sp_fe), 
-                        color='black', 
-                        lw=2)
-    
-                if verbose:
-
-                    global coords
-                    coords = [] 
-                    cid = fig.canvas.mpl_connect('button_press_event', onclick2)
+                                  sp_fe=sp_fe), 
+                            color='black', 
+                            lw=2)
         
-                    plt.show(1)
+                    if verbose:
+    
+                        global coords
+                        coords = [] 
+                        cid = fig.canvas.mpl_connect('button_press_event', onclick2)
+            
+                        plt.show(1)
+                    
                     plt.close() 
+                    
+                    ##########################################################################
+
+            except TypeError as e: 
+
+                print 'Background fit failed because ' + e.args[0] 
+ 
+                fit_out = {'name':plot_title, 
+                           'fwhm':0.0,
+                           'sigma':0.0,
+                           'median':0.0,
+                           'cen':0.0,
+                           'eqw':0.0,
+                           'broad_lum':0.0,
+                           'narrow_fwhm':0.0,
+                           'narrow_lum':0.0,
+                           'oiii_5007_eqw':0.0,
+                           'oiii_5007_lum':0.0,
+                           'oiii_5007_n_lum':0.0,
+                           'oiii_5007_b_lum':0.0,
+                           'oiii_fwhm':0.0,
+                           'oiii_n_fwhm':0.0,
+                           'oiii_b_fwhm':0.0,
+                           'oiii_5007_voff':0.0,
+                           'redchi':0.0,
+                           'snr':0.0,
+                           'monolum':0.0}
+
+
+                if save_dir is not None:
+                    if not os.path.exists(save_dir):
+                        os.makedirs(save_dir)
+                    with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+                        f.write('No fit')
+
+                if plot: 
+                    plot_spec(wav=wav,
+                              flux=flux,
+                              plot_savefig = plot_savefig,
+                              save_dir = save_dir,
+                              z=z,
+                              w0=w0,
+                              continuum_region=continuum_region,
+                              fitting_region=fitting_region,
+                              plot_region=plot_region,
+                              plot_title=plot_title,
+                              verbose=verbose)
+
                 
-                ##########################################################################
+
+                return fit_out 
 
         elif subtract_fe is False: 
        
@@ -1046,21 +1248,67 @@ def fit_line(wav,
             bkgdpars['exponent'].value = 1.0
             bkgdpars['amplitude'].value = 1.0 
 
-            
-            out = minimize(resid,
-                           bkgdpars,
-                           kws={'x':xdat_cont.value, 
-                                'model':bkgdmod, 
-                                'data':ydat_cont},
-                           method='leastsq') 
+            try: 
+                out = minimize(resid,
+                               bkgdpars,
+                               kws={'x':xdat_cont.value, 
+                                    'model':bkgdmod, 
+                                    'data':ydat_cont},
+                               method='leastsq') 
+    
+                
+    
+                if verbose:
+                    print out.message  
+                    print fit_report(bkgdpars)
 
-            
+            except TypeError as e: 
 
-            if verbose:
-                print out.message  
-                print fit_report(bkgdpars)
+                print 'Background fit failed because ' + e.args[0] 
+ 
+                fit_out = {'name':plot_title, 
+                           'fwhm':0.0,
+                           'sigma':0.0,
+                           'median':0.0,
+                           'cen':0.0,
+                           'eqw':0.0,
+                           'broad_lum':0.0,
+                           'narrow_fwhm':0.0,
+                           'narrow_lum':0.0,
+                           'oiii_5007_eqw':0.0,
+                           'oiii_5007_lum':0.0,
+                           'oiii_5007_n_lum':0.0,
+                           'oiii_5007_b_lum':0.0,
+                           'oiii_fwhm':0.0,
+                           'oiii_n_fwhm':0.0,
+                           'oiii_b_fwhm':0.0,
+                           'oiii_5007_voff':0.0,
+                           'redchi':0.0,
+                           'snr':0.0,
+                           'monolum':0.0} 
 
 
+                if save_dir is not None:
+                    if not os.path.exists(save_dir):
+                        os.makedirs(save_dir)
+                    with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+                        f.write('No fit')
+
+                if plot: 
+                    plot_spec(wav=wav,
+                              flux=flux,
+                              plot_savefig = plot_savefig,
+                              save_dir = save_dir,
+                              z=z,
+                              w0=w0,
+                              continuum_region=continuum_region,
+                              fitting_region=fitting_region,
+                              plot_region=plot_region,
+                              plot_title=plot_title,
+                              verbose=verbose)
+                
+
+                return fit_out 
 
     ####################################################################################################################
     """
@@ -1161,7 +1409,7 @@ def fit_line(wav,
             pars['g{}_center'.format(i)].min = -5000.0
             pars['g{}_center'.format(i)].max = 5000.0
             pars['g{}_amplitude'.format(i)].min = 0.0
-            #pars['g{}_sigma'.format(i)].min = 1000.0
+            pars['g{}_sigma'.format(i)].min = 1000.0
             pars['g{}_sigma'.format(i)].max = 10000.0
         
         # if nGaussians == 2:
@@ -1247,7 +1495,7 @@ def fit_line(wav,
             pars['sii_6731_n_sigma'].value = 700.0 / 2.35 
             pars['ha_n_sigma'].value = 700.0 / 2.35 
 
-            pars['ha_n_sigma'].max = 1000.0 / 2.35 
+            pars['ha_n_sigma'].max = 900.0 / 2.35 
             pars['ha_n_sigma'].min = 400.0 / 2.35 
             pars['nii_6548_n_sigma'].set(expr='ha_n_sigma')
             pars['nii_6584_n_sigma'].set(expr='ha_n_sigma')
@@ -1438,7 +1686,6 @@ def fit_line(wav,
     yerr = yerr[good_pix]
     vdat = vdat[good_pix]
 
-
     out = minimize(resid,
                    pars,
                    args=(np.asarray(vdat), mod, ydat, yerr),
@@ -1603,19 +1850,143 @@ def fit_line(wav,
     eqw = np.nansum(eqw)
 
     # Broad luminosity
-    broad_lum = norm * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm 
-    if fit_model == 'Ha':
-        narrow_lum = pars['ha_n_amplitude'].value * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm 
+    broad_lum = np.sum(integrand(xs)[:-1] * np.diff(xs_wav.value)) * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm 
+
+    if fit_model == 'Ha':       
+        
+        # I know that the Gaussians are normalised, so the area is just the amplitude, so surely
+        # I shouldn't have to do this function evaluation. 
+
+        narrow_mod = GaussianModel()
+        narrow_pars = narrow_mod.make_params()
+        narrow_pars['amplitude'].value = pars['ha_n_amplitude'].value
+        narrow_pars['sigma'].value = pars['ha_n_sigma'].value 
+        narrow_pars['center'].value = pars['ha_n_center'].value 
+
+        narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
+                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+
         narrow_fwhm = pars['ha_n_fwhm'].value 
-    elif fit_model == 'Hb':
-        narrow_lum = pars['hb_n_amplitude'].value * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm     
+
+        oiii_5007_eqw = 0.0 
+        oiii_5007_lum = 0.0 * (u.erg / u.s)
+        oiii_5007_n_lum = 0.0 * (u.erg / u.s)
+        oiii_5007_b_lum = 0.0 * (u.erg / u.s)
+        oiii_fwhm = 0.0 
+        oiii_n_fwhm = 0.0 
+        oiii_b_fwhm = 0.0 
+        oiii_5007_voff = 0.0 
+
+
+    elif fit_model == 'Hb':    
+ 
+        oiii_5007_b_mod = GaussianModel()
+        oiii_5007_b_pars = oiii_5007_b_mod.make_params() 
+
+        oiii_5007_b_pars['amplitude'].value = pars['oiii_5007_b_amplitude'].value
+        oiii_5007_b_pars['sigma'].value = pars['oiii_5007_b_sigma'].value 
+        oiii_5007_b_pars['center'].value = pars['oiii_5007_b_center'].value 
+
+        oiii_5007_b_xs = np.arange(oiii_5007_b_pars['center'].value - 10000.0, 
+                                   oiii_5007_b_pars['center'].value + 10000.0, 
+                                   dv)
+
+        oiii_5007_b_xs_wav = doppler2wave(oiii_5007_b_xs*(u.km/u.s), w0) 
+
+
+        oiii_5007_b_lum = np.sum(oiii_5007_b_mod.eval(params=oiii_5007_b_pars, x=oiii_5007_b_xs)[:-1] * np.diff(oiii_5007_b_xs_wav.value)) * \
+                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+
+        oiii_5007_b_fwhm = oiii_5007_b_pars['sigma'].value * 2.35 
+
+        oiii_5007_voff = oiii_5007_b_pars['center'].value - wave2doppler(5008.239*u.AA, w0).value
+
+        oiii_5007_n_mod = GaussianModel()
+        oiii_5007_n_pars = oiii_5007_n_mod.make_params() 
+
+        oiii_5007_n_pars['amplitude'].value = pars['oiii_5007_n_amplitude'].value
+        oiii_5007_n_pars['sigma'].value = pars['oiii_5007_n_sigma'].value 
+        oiii_5007_n_pars['center'].value = pars['oiii_5007_n_center'].value 
+
+        oiii_5007_n_xs = np.arange(oiii_5007_n_pars['center'].value - 10000.0, 
+                                   oiii_5007_n_pars['center'].value + 10000.0, 
+                                   dv)
+
+        oiii_5007_n_xs_wav = doppler2wave(oiii_5007_n_xs*(u.km/u.s), w0) 
+
+
+        oiii_5007_n_lum = np.sum(oiii_5007_n_mod.eval(params=oiii_5007_n_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
+                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+
+        oiii_5007_n_fwhm = oiii_5007_n_pars['sigma'].value * 2.35 
+           
+        oiii_5007_mod = GaussianModel(prefix='oiii_5007_n_') + GaussianModel(prefix='oiii_5007_b_')
+        oiii_5007_pars = oiii_5007_mod.make_params() 
+
+        oiii_5007_pars['oiii_5007_n_amplitude'].value = pars['oiii_5007_n_amplitude'].value
+        oiii_5007_pars['oiii_5007_n_sigma'].value = pars['oiii_5007_n_sigma'].value 
+        oiii_5007_pars['oiii_5007_n_center'].value = pars['oiii_5007_n_center'].value 
+        oiii_5007_pars['oiii_5007_b_amplitude'].value = pars['oiii_5007_b_amplitude'].value
+        oiii_5007_pars['oiii_5007_b_sigma'].value = pars['oiii_5007_b_sigma'].value 
+        oiii_5007_pars['oiii_5007_b_center'].value = pars['oiii_5007_b_center'].value 
+
+
+        flux_line = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
+
+        f = (flux_line + flux_bkgd) / flux_bkgd 
+        oiii_5007_eqw = (f[:-1] - 1.0) * np.diff(oiii_5007_n_xs_wav.value)
+        oiii_5007_eqw = np.nansum(oiii_5007_eqw)
+
+        oiii_5007_lum = np.sum(oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
+                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+
+        oiii_5007_pdf = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
+        half_max = np.max(oiii_5007_pdf) / 2.0
+    
+        i = 0
+        while oiii_5007_pdf[i] < half_max:
+            i+=1
+    
+        oiii_5007_root1 = oiii_5007_n_xs[i]
+    
+        i = 0
+        while oiii_5007_pdf[-i] < half_max:
+            i+=1
+    
+        oiii_5007_root2 = oiii_5007_n_xs[-i]
+        
+        oiii_5007_fwhm = oiii_5007_root2 - oiii_5007_root1
+
         if hb_narrow is True:
+
+            narrow_mod = GaussianModel()
+            narrow_pars = narrow_mod.make_params()
+            narrow_pars['amplitude'].value = pars['hb_n_amplitude'].value
+            narrow_pars['sigma'].value = pars['hb_n_sigma'].value 
+            narrow_pars['center'].value = pars['hb_n_center'].value 
+
+            narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
+                        (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm
+
             narrow_fwhm = pars['hb_n_fwhm'].value 
+        
         else:
+
+            narrow_lum = 0.0 * (u.erg / u.s)          
             narrow_fwhm = 0.0 
     else: 
+      
         narrow_lum = 0.0 * (u.erg / u.s)
         narrow_fwhm = 0.0 
+        oiii_5007_eqw = 0.0 
+        oiii_5007_lum = 0.0 * (u.erg / u.s)
+        oiii_5007_n_lum = 0.0 * (u.erg / u.s)
+        oiii_5007_b_lum = 0.0 * (u.erg / u.s)
+        oiii_5007_fwhm = 0.0 
+        oiii_5007_n_fwhm = 0.0 
+        oiii_5007_b_fwhm = 0.0 
+        oiii_5007_voff = 0.0 
+
 
     if verbose:
         print plot_title, \
@@ -1626,8 +1997,17 @@ def fit_line(wav,
              '{0:.2f},'.format(eqw), \
              '{0:.2f},'.format(np.log10(broad_lum.value)), \
              '{0:.2f},'.format(narrow_fwhm), \
-             '{0:.2f},'.format(np.log10(narrow_lum.value)), \
+             '{0:.2f},'.format(np.log10(narrow_lum.value) if narrow_lum.value > 0.0 else 0.0), \
+             '{0:.2f},'.format(oiii_5007_eqw), \
+             '{0:.2f},'.format(np.log10(oiii_5007_lum.value) if oiii_5007_lum.value > 0.0 else 0.0), \
+             '{0:.2f},'.format(np.log10(oiii_5007_n_lum.value) if oiii_5007_n_lum.value > 0.0 else 0.0), \
+             '{0:.2f},'.format(np.log10(oiii_5007_b_lum.value) if oiii_5007_b_lum.value > 0.0 else 0.0), \
+             '{0:.2f},'.format(oiii_5007_fwhm), \
+             '{0:.2f},'.format(oiii_5007_n_fwhm), \
+             '{0:.2f},'.format(oiii_5007_b_fwhm), \
+             '{0:.2f},'.format(oiii_5007_voff), \
              '{0:.2f}'.format(out.redchi)
+
 
     if verbose:
         print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum.value)) 
@@ -1657,7 +2037,15 @@ def fit_line(wav,
                'eqw': eqw,
                'broad_lum':np.log10(broad_lum.value),
                'narrow_fwhm':narrow_fwhm,
-               'narrow_lum':np.log10(narrow_lum.value),
+               'narrow_lum':np.log10(narrow_lum.value) if narrow_lum.value > 0.0 else 0.0,
+               'oiii_5007_eqw':oiii_5007_eqw,
+               'oiii_5007_lum':np.log10(oiii_5007_lum.value) if oiii_5007_lum.value > 0.0 else 0.0,
+               'oiii_5007_n_lum':np.log10(oiii_5007_n_lum.value) if oiii_5007_n_lum.value > 0.0 else 0.0,
+               'oiii_5007_b_lum':np.log10(oiii_5007_b_lum.value) if oiii_5007_b_lum.value > 0.0 else 0.0,
+               'oiii_fwhm':oiii_5007_fwhm,
+               'oiii_n_fwhm':oiii_5007_n_fwhm,
+               'oiii_b_fwhm':oiii_5007_b_fwhm,
+               'oiii_5007_voff':oiii_5007_voff,
                'redchi':out.redchi,
                'snr':np.median(ydat / yerr),
                'monolum':np.log10(mono_lum.value)}
