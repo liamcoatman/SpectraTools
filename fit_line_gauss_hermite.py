@@ -27,6 +27,7 @@ from scipy.stats import norm
 from palettable.colorbrewer.qualitative import Set2_5
 from time import gmtime, strftime
 from astropy.cosmology import WMAP9 as cosmoWMAP
+from astropy import constants as const
 
 # Simple mouse click function to store coordinates
 def onclick(event):
@@ -169,7 +170,8 @@ def plot_fit(wav=None,
              fitting_region=[6400,6800]*u.AA,
              plot_region=None,
              line_region=[-10000,10000]*(u.km/u.s),
-             mask_negflux = True):
+             mask_negflux = True,
+             verbose=True):
 
 
     # plotting region
@@ -401,15 +403,19 @@ def plot_fit(wav=None,
     fig.tight_layout()
 
     # Call click func
-    global coords
-    coords = [] 
-    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+    if verbose:
+
+        global coords
+        coords = [] 
+        cid = fig.canvas.mpl_connect('button_press_event', onclick)
 
     if plot_savefig is not None:
-        fig.savefig(os.path.join(save_dir,plot_savefig))
+        fig.savefig(os.path.join(save_dir, plot_savefig))
 
-    plt.show(1)
-    plt.close()
+    if verbose:
+        plt.show(1)
+    
+    plt.close() 
 
     return None
 
@@ -459,6 +465,7 @@ def fit_line(wav,
 
     fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
 
+    spec_dv = np.around(np.mean(const.c.to('km/s') * (1.0 - 10.0**-np.diff(np.log10(wav[fitting].value)))), decimals=1)    
 
     # fit power-law to continuum region
     # For civ we use median because more robust for small wavelength intervals. 
@@ -520,6 +527,33 @@ def fit_line(wav,
         yerr_red = yerr_red[mask_red]
         vdat_red = vdat_red[mask_red]
 
+    ##########################################################################################
+    """
+    Calculate S/N ratio per resolution element in the continuum regions 
+    Need to know what SDSS resolution is
+    Assumes that the spectra are SDSS, won't be correct otherwise 
+    """
+
+    wa = np.concatenate((xdat_blue, xdat_red))
+    fl = np.concatenate((ydat_blue, ydat_red))
+    er = np.concatenate((yerr_blue, yerr_red))
+
+    good = (er > 0) & ~np.isnan(fl)
+   
+    fl = fl[good]
+    er = er[good]
+    wa = wa[good]
+   
+    # fwhm resolution in units of pixels
+    # wres, res = np.genfromtxt('/data/lc585/SDSS/resolution.dat', unpack=True)
+    # wres = wres / (1.0 + z)
+
+    # f = interp1d(wres, res)
+  
+    # print 'S/N per pixel in continuum: {0:.2f}'.format(np.median( np.sqrt(f(wa)) * fl / er ))
+
+    snr = np.median(fl/er) 
+    #############################################################################################################################################
 
     if bkgd_median is True:
 
@@ -770,10 +804,31 @@ def fit_line(wav,
 
     eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
     eqw = np.nansum(eqw)
+
+    # Broad luminosity
+    broad_lum = np.sum(integrand(xs)[:-1] * np.diff(xs_wav.value)) * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm 
  
-    print plot_title, '{0:.2f},'.format((root2 - root1)*sd.value), '{0:.2f},'.format(sigma*sd.value), '{0:.2f},'.format(md*sd.value), '{0:.2f},'.format(func_center*sd.value), '{0:.2f},'.format(eqw), '{0:.2f}'.format(out.redchi)
+    print plot_title, \
+         '{0:.2f},'.format((root2 - root1)*sd.value), \
+         '{0:.2f},'.format(sigma*sd.value), \
+         '{0:.2f},'.format(md*sd.value), \
+         '{0:.2f},'.format(func_center*sd.value), \
+         '{0:.2f},'.format(eqw), \
+         '{0:.2f}'.format(out.redchi)
 
     print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum.value))  
+
+    fit_out = {'name':plot_title, 
+               'fwhm':(root2 - root1)*sd.value,
+               'sigma':sigma*sd.value,
+               'median':md*sd.value,
+               'cen':func_center*sd.value,
+               'eqw':eqw,
+               'broad_lum':np.log10(broad_lum.value),
+               'redchi':out.redchi,
+               'snr':snr,
+               'dv':spec_dv, 
+               'monolum':np.log10(mono_lum.value)}
 
     # print plot_title 
     # print 'peak_civ = {0:.2f}*(u.km/u.s),'.format(func_center*sd.value)
@@ -800,40 +855,7 @@ def fit_line(wav,
         pickle.dump(my_line_props, parfile, -1)
         parfile.close()
 
-    # """
-    # Calculate S/N ratio per resolution element
-    # Need to know what SDSS resolution is
-    # """
-
-    # vdat = wave2doppler(wav, w0)
-    # vmin = md - 10000.0
-    # vmax = md + 10000.0
-
-    # i = np.argmin(np.abs(vdat.value - vmin))
-    # j = np.argmin(np.abs(vdat.value - vmax))
-
-    # fl = flux[i:j]
-    # er = err[i:j]
-    # w = wav[i:j]
-
-    # good = (er > 0) & ~np.isnan(fl)
-    # if len(good.nonzero()[0]) == 0:
-    #     print('No good data in this range!')
-
-    # fl = fl[good]
-    # er = er[good]
-    # w = w[good]
-    # v = wave2doppler(w,w0)
-
-    # snr = fl / er
-
-    # # fwhm resolution in units of pixels
-    # wres, res = np.genfromtxt('/data/lc585/SDSS/resolution.dat', unpack=True)
-    # wres = wres / (1.0 + z)
-    # vres = wave2doppler(wres*u.AA, w0)
-
-    # f = interp1d(vres, res)
-    # print 'snr_civ = {0:.2f},'.format(np.mean( np.sqrt(f(v)) * snr))
+   
 
     if plot:
         plot_fit(wav=wav,
@@ -852,9 +874,10 @@ def fit_line(wav,
                  plot_region=plot_region,
                  plot_title=plot_title,
                  line_region=line_region,
-                 mask_negflux=mask_negflux)
+                 mask_negflux=mask_negflux,
+                 verbose=verbose)
 
-    return None
+    return fit_out
 
 
 if __name__ == '__main__':

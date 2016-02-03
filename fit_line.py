@@ -29,8 +29,28 @@ from astropy.convolution import Gaussian1DKernel, convolve
 from scipy.interpolate import interp1d 
 from os.path import expanduser
 from barak import spec 
+from astropy import constants as const
 import warnings
 warnings.simplefilter(action = "ignore", category = FutureWarning)
+
+def rebin(wa, fl, er, n):
+    
+    """ 
+    Bins up the spectrum by averaging the values of every n pixels. 
+    """ 
+    remain = -(len(wa) % n) or None
+
+    wa = wa[:remain].reshape(-1, n)
+    fl = fl[:remain].reshape(-1, n)
+    er = er[:remain].reshape(-1, n)
+   
+    n = float(n)
+   
+    wa = np.nansum(wa, axis=1) / n
+    fl = np.nansum(fl / er**2, axis=1) / np.nansum(1.0 / er**2, axis=1)  
+    er = 1.0 / np.sqrt(np.nansum(1 / er**2, axis=1) ) 
+    
+    return wa, fl, er 
 
 # Simple mouse click function to s tore coordinates
 def onclick(event):
@@ -203,7 +223,7 @@ def plot_spec(wav=None,
                alpha=0.4, 
                color='powderblue')
 
-    ax.set_ylim(np.median(flux) + 3.0*np.std(flux), np.median(flux) - 3.0*np.std(flux))
+    ax.set_ylim(np.median(flux) - 3.0*np.std(flux), np.median(flux) + 3.0*np.std(flux))
 
     ax.set_ylabel(r'F$_\lambda$', fontsize=12)
     ax.set_xlabel(r'Wavelength [$\AA$]', fontsize=12)
@@ -653,6 +673,7 @@ def plot_fit(wav=None,
     x_axis = np.arange(-5, 5, 0.001)
     hg.plot(x_axis, norm.pdf(x_axis,0,1), color='black', lw=2)
 
+
     #########################################
 
     fs.plot(wav, median_filter(flux,5.0), color='black', lw=1)
@@ -733,7 +754,8 @@ def fit_line(wav,
              fe_FWHM=50*u.AA,
              fe_FWHM_vary=False,
              hb_narrow=True,
-             narrow_fwhm=None):
+             narrow_fwhm=None,
+             n_rebin=1):
 
     """
     Fiting and continuum regions given in rest frame wavelengths with
@@ -755,11 +777,16 @@ def fit_line(wav,
     flux = flux * spec_norm 
     err = err * spec_norm 
 
+    # Rebin spectrum 
+    wav, flux, err = rebin(wav, flux, err, n_rebin)
+
     # index of the region we want to fit
     if fitting_region.unit == (u.km/u.s):
         fitting_region = doppler2wave(fitting_region, w0)
 
     fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
+
+    spec_dv = np.around(np.mean(const.c.to('km/s') * (1.0 - 10.0**-np.diff(np.log10(wav[fitting].value)))), decimals=1)    
 
     # fit power-law to continuum region
     # For civ we use median because more robust for small wavelength intervals. 
@@ -819,6 +846,37 @@ def fit_line(wav,
             vdat_red = vdat_red[mask_red]
 
 
+    #############################################################################################
+
+    """
+    Calculate S/N ratio per resolution element in continuum
+    This is only correct for the LIRIS spectra 
+    """
+    
+    wa = np.concatenate((xdat_blue, xdat_red))
+    fl = np.concatenate((ydat_blue, ydat_red))
+    er = np.concatenate((yerr_blue, yerr_red))
+
+    good = (er > 0) & ~np.isnan(fl)
+   
+    fl = fl[good]
+    er = er[good]
+    wa = wa[good]
+
+    snr = np.median(fl / er)  
+
+    # 33.02 is the A per resolution element I measured from the Arc spectrum
+    if verbose:
+        # print 'S/N per resolution element in continuum: {0:.2f}'.format(np.median( np.sqrt(33.02 / np.diff(wa) ) * fl[:-1] / er[:-1] )) 
+        print 'S/N per pixel in continuum: {0:.2f}'.format(snr) 
+        
+
+
+
+
+    ##############################################################################################
+
+
     if bkgd_median is True:
 
         xdat_cont = np.array( [np.median(xdat_blue.value), np.median(xdat_red.value)] )
@@ -848,6 +906,7 @@ def fit_line(wav,
                 if verbose:
                     print out.message  
                     print fit_report(bkgdpars)
+                    print out.nfev
 
             except TypeError as e: 
 
@@ -872,6 +931,7 @@ def fit_line(wav,
                            'oiii_5007_voff':0.0,
                            'redchi':0.0,
                            'snr':0.0,
+                           'dv':0.0*(u.km/u.s),
                            'monolum':0.0}
     
                 if save_dir is not None:
@@ -934,6 +994,7 @@ def fit_line(wav,
                        'oiii_5007_voff':0.0,
                        'redchi':0.0,
                        'snr':0.0,
+                       'dv':0.0*(u.km/u.s),
                        'monolum':0.0}
 
             if save_dir is not None:
@@ -1208,6 +1269,7 @@ def fit_line(wav,
                            'oiii_5007_voff':0.0,
                            'redchi':0.0,
                            'snr':0.0,
+                           'dv':0.0*(u.km/u.s),
                            'monolum':0.0}
 
 
@@ -1285,6 +1347,7 @@ def fit_line(wav,
                            'oiii_5007_voff':0.0,
                            'redchi':0.0,
                            'snr':0.0,
+                           'dv':0.0*(u.km/u.s),
                            'monolum':0.0} 
 
 
@@ -1872,9 +1935,9 @@ def fit_line(wav,
         oiii_5007_lum = 0.0 * (u.erg / u.s)
         oiii_5007_n_lum = 0.0 * (u.erg / u.s)
         oiii_5007_b_lum = 0.0 * (u.erg / u.s)
-        oiii_fwhm = 0.0 
-        oiii_n_fwhm = 0.0 
-        oiii_b_fwhm = 0.0 
+        oiii_5007_fwhm = 0.0
+        oiii_5007_n_fwhm = 0.0 
+        oiii_5007_b_fwhm = 0.0 
         oiii_5007_voff = 0.0 
 
 
@@ -2012,23 +2075,6 @@ def fit_line(wav,
     if verbose:
         print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum.value)) 
 
-    # """
-    # Calculate S/N ratio per resolution element
-    # """
-
-    good = (yerr > 0) & ~np.isnan(ydat)
-    if len(good.nonzero()[0]) == 0:
-        print('No good data in this range!')
-
-    ydat = ydat[good]
-    yerr = yerr[good]
-    
-    if verbose:
-        print 'Median SNR per pixel = {0:.2f}'.format(np.median(ydat / yerr))
-  
-    # # 33.02 is the A per resolution element I measured from the Arc spectrum
-    # # print 'snr_ha = {0:.2f}'.format(np.mean(np.sqrt(33.02/dw1) * snr))
-
     fit_out = {'name':plot_title, 
                'fwhm':root2 - root1,
                'sigma': sd,
@@ -2047,7 +2093,8 @@ def fit_line(wav,
                'oiii_b_fwhm':oiii_5007_b_fwhm,
                'oiii_5007_voff':oiii_5007_voff,
                'redchi':out.redchi,
-               'snr':np.median(ydat / yerr),
+               'snr':snr,
+               'dv':spec_dv, 
                'monolum':np.log10(mono_lum.value)}
 
     # print plot_title 
@@ -2110,7 +2157,6 @@ def fit_line(wav,
                  fit_model=fit_model,
                  hb_narrow=hb_narrow,
                  verbose=verbose)
-
 
     return fit_out 
 
