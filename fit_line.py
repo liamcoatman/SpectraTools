@@ -2469,25 +2469,26 @@ def fit_line(wav,
         Nicely print out important fitting info
         """     
         
-        if pars['ha_n_sigma'].vary is True:
-            print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['ha_n_sigma'].value * 2.35, 
-                                                                                                              pars['ha_n_sigma'].init_value * 2.35, 
-                                                                                                              pars['ha_n_sigma'].vary, 
-                                                                                                              pars['ha_n_sigma'].min * 2.35, 
-                                                                                                              pars['ha_n_sigma'].max * 2.35) 
-        else:
-            print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(pars['ha_n_sigma'].value * 2.35, 
-                                                             pars['ha_n_sigma'].vary) 
-
-        if pars['ha_n_center'].vary is True:
-            print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['ha_n_center'].value, 
-                                                                                                                pars['ha_n_center'].init_value, 
-                                                                                                                pars['ha_n_center'].vary, 
-                                                                                                                pars['ha_n_center'].min, 
-                                                                                                                pars['ha_n_center'].max) 
-        else:
-            print 'Narrow Center = {0:.1f}, Vary = {1}'.format(pars['ha_n_center'].value, 
-                                                             pars['ha_n_center'].vary)     
+        if verbose: 
+            if pars['ha_n_sigma'].vary is True:
+                print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['ha_n_sigma'].value * 2.35, 
+                                                                                                                  pars['ha_n_sigma'].init_value * 2.35, 
+                                                                                                                  pars['ha_n_sigma'].vary, 
+                                                                                                                  pars['ha_n_sigma'].min * 2.35, 
+                                                                                                                  pars['ha_n_sigma'].max * 2.35) 
+            else:
+                print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(pars['ha_n_sigma'].value * 2.35, 
+                                                                 pars['ha_n_sigma'].vary) 
+    
+            if pars['ha_n_center'].vary is True:
+                print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['ha_n_center'].value, 
+                                                                                                                    pars['ha_n_center'].init_value, 
+                                                                                                                    pars['ha_n_center'].vary, 
+                                                                                                                    pars['ha_n_center'].min, 
+                                                                                                                    pars['ha_n_center'].max) 
+            else:
+                print 'Narrow Center = {0:.1f}, Vary = {1}'.format(pars['ha_n_center'].value, 
+                                                                 pars['ha_n_center'].vary)     
                                                              
                                                              
                                                     
@@ -2588,6 +2589,32 @@ def fit_line(wav,
 
             narrow_fwhm = pars['hb_n_fwhm'].value 
         
+                #######################################################################
+            """
+            Nicely print out important fitting info
+            """     
+            
+            if verbose: 
+                if pars['hb_n_sigma'].vary is True:
+                    print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['hb_n_sigma'].value * 2.35, 
+                                                                                                                      pars['hb_n_sigma'].init_value * 2.35, 
+                                                                                                                      pars['hb_n_sigma'].vary, 
+                                                                                                                      pars['hb_n_sigma'].min * 2.35, 
+                                                                                                                      pars['hb_n_sigma'].max * 2.35) 
+                else:
+                    print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(pars['hb_n_sigma'].value * 2.35, 
+                                                                     pars['hb_n_sigma'].vary) 
+        
+                if pars['hb_n_center'].vary is True:
+                    print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['hb_n_center'].value, 
+                                                                                                                        pars['hb_n_center'].init_value, 
+                                                                                                                        pars['hb_n_center'].vary, 
+                                                                                                                        pars['hb_n_center'].min, 
+                                                                                                                        pars['hb_n_center'].max) 
+                else:
+                    print 'Narrow Center = {0:.1f}, Vary = {1}'.format(pars['hb_n_center'].value, 
+                                                                       pars['hb_n_center'].vary)     
+
         else:
 
             narrow_lum = -9999.99 * (u.erg / u.s)          
