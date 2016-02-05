@@ -29,6 +29,68 @@ from time import gmtime, strftime
 from astropy.cosmology import WMAP9 as cosmoWMAP
 from astropy import constants as const
 
+def plot_spec(wav=None,
+              flux=None,
+              plot_savefig=None,
+              plot_title='',
+              save_dir=None,
+              z=0.0,
+              w0=6564.89*u.AA,
+              continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
+              fitting_region=[6400,6800]*u.AA,
+              plot_region=None,
+              verbose=True):    
+
+    fig = plt.figure(figsize=(6,4))
+    ax = fig.add_subplot(1,1,1)
+    
+    ax.scatter(wav.value, 
+               flux, 
+               edgecolor='None', 
+               s=15, 
+               alpha=0.9, 
+               facecolor='black')
+
+    if continuum_region[0].unit == (u.km/u.s):
+        continuum_region[0] = doppler2wave(continuum_region[0], w0)
+    if continuum_region[1].unit == (u.km/u.s):
+        continuum_region[1] = doppler2wave(continuum_region[1], w0)
+
+    if fitting_region.unit == (u.km/u.s):
+        fitting_region = doppler2wave(fitting_region, w0)
+
+    ax.axvspan(fitting_region[0].value, 
+               fitting_region[1].value, 
+               alpha=0.4, 
+               color='moccasin')
+       
+    ax.axvspan(continuum_region[0][0].value, 
+               continuum_region[0][1].value, 
+               alpha=0.4, 
+               color='powderblue')
+
+    ax.axvspan(continuum_region[1][0].value, 
+               continuum_region[1][1].value, 
+               alpha=0.4, 
+               color='powderblue')
+
+    ax.set_ylim(np.median(flux) - 3.0*np.std(flux), np.median(flux) + 3.0*np.std(flux))
+
+    ax.set_ylabel(r'F$_\lambda$', fontsize=12)
+    ax.set_xlabel(r'Wavelength [$\AA$]', fontsize=12)
+    
+    fig.tight_layout() 
+    
+    if plot_savefig is not None:
+        fig.savefig(os.path.join(save_dir, plot_savefig))
+
+    if verbose:
+        plt.show(1)
+    
+    plt.close()
+    
+    return None   
+    
 # Simple mouse click function to store coordinates
 def onclick(event):
 
@@ -527,6 +589,8 @@ def fit_line(wav,
         yerr_red = yerr_red[mask_red]
         vdat_red = vdat_red[mask_red]
 
+
+
     ##########################################################################################
     """
     Calculate S/N ratio per resolution element in the continuum regions 
@@ -556,6 +620,48 @@ def fit_line(wav,
     #############################################################################################################################################
 
     if bkgd_median is True:
+
+        if (len(xdat_blue) == 0) | (len(xdat_red) == 0):
+
+            if verbose:
+                 print "Cannot do background fit, no flux in blue or red window and bkgd_median is True"
+
+
+            fit_out = {'name':plot_title, 
+                           'fwhm':0.0,
+                           'sigma':0.0,
+                           'median':0.0,
+                           'cen':0.0,
+                           'eqw':0.0,
+                           'broad_lum':0.0,
+                           'redchi':0.0,
+                           'snr':0.0,
+                           'dv':0.0*(u.km/u.s),
+                           'monolum':0.0}
+    
+            if save_dir is not None:
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+                with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+                    f.write('No fit')               
+
+            if plot: 
+                plot_spec(wav=wav,
+                          flux=flux,
+                          plot_savefig = plot_savefig,
+                          save_dir = save_dir,
+                          z=z,
+                          w0=w0,
+                          continuum_region=continuum_region,
+                          fitting_region=fitting_region,
+                          plot_region=plot_region,
+                          plot_title=plot_title,
+                          verbose=verbose)
+
+            
+            return fit_out 
+
+
 
         xdat_cont = np.array( [np.median(xdat_blue.value), np.median(xdat_red.value)] )
         ydat_cont = np.array( [np.median(ydat_blue), np.median(ydat_red)] )
