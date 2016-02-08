@@ -34,12 +34,174 @@ import mpld3
 import warnings
 warnings.simplefilter(action = "ignore", category = FutureWarning) # I get "elementwise comparison failed" during plotting, but doesn't seem important
 
+def gausshermite_component(x, amp, sig, cen, order):
+
+    if order == 0:
+        return (amp/(np.sqrt(2*math.pi)*sig)) * np.exp(-(x-cen)**2 /(2*sig**2))
+    if order == 1:
+        return np.sqrt(2.0) * x * (amp/(np.sqrt(2*math.pi)*sig)) * np.exp(-(x-cen)**2 /(2*sig**2))
+    if order == 2:    
+        return (2.0*x*x - 1.0) / np.sqrt(2.0) * (amp/(np.sqrt(2*math.pi)*sig)) * np.exp(-(x-cen)**2 /(2*sig**2))
+    if order == 3:   
+        return x * (2.0*x*x - 3.0) / np.sqrt(3.0) * (amp/(np.sqrt(2*math.pi)*sig)) * np.exp(-(x-cen)**2 /(2*sig**2))
+    if order == 4:   
+        return (x*x*(4.0*x*x-12.0)+3.0) / (2.0*np.sqrt(6.0)) * (amp/(np.sqrt(2*math.pi)*sig)) * np.exp(-(x-cen)**2 /(2*sig**2))
+    if order == 5:    
+        return (x*(x*x*(4.0*x*x-20.0) + 15.0)) / (2.0*np.sqrt(15.0)) * (amp/(np.sqrt(2*math.pi)*sig)) * np.exp(-(x-cen)**2 /(2*sig**2))
+    if order == 6:    
+        return (x*x*(x*x*(8.0*x*x-60.0) + 90.0) - 15.0) / (12.0*np.sqrt(5.0)) * (amp/(np.sqrt(2*math.pi)*sig)) * np.exp(-(x-cen)**2 /(2*sig**2))
+
+def gausshermite_0(x, amp0, sig0, cen0, order):
+
+    h0 = gausshermite_component(x, amp0, sig0, cen0)
+
+    return h0 
+
+def gausshermite_1(x, 
+                   amp0, 
+                   sig0, 
+                   cen0, 
+                   amp1, 
+                   sig1, 
+                   cen1):
+
+    h0 = gausshermite_component(x, amp0, sig0, cen0, 0)
+    h1 = gausshermite_component(x, amp1, sig1, cen1, 1)
+
+    return h0 + h1
+
+def gausshermite_2(x, 
+                   amp0, 
+                   sig0, 
+                   cen0, 
+                   amp1, 
+                   sig1, 
+                   cen1, 
+                   amp2, 
+                   sig2, 
+                   cen2):
+
+    h0 = gausshermite_component(x, amp0, sig0, cen0, 0)
+    h1 = gausshermite_component(x, amp1, sig1, cen1, 1)
+    h2 = gausshermite_component(x, amp2, sig2, cen2, 2)
+
+    return h0 + h1 + h2 
+
+def gausshermite_3(x, 
+                   amp0, 
+                   sig0, 
+                   cen0, 
+                   amp1, 
+                   sig1, 
+                   cen1, 
+                   amp2, 
+                   sig2, 
+                   cen2, 
+                   amp3, 
+                   sig3, 
+                   cen3):   
+
+    h0 = gausshermite_component(x, amp0, sig0, cen0, 0)
+    h1 = gausshermite_component(x, amp1, sig1, cen1, 1)
+    h2 = gausshermite_component(x, amp2, sig2, cen2, 2)
+    h3 = gausshermite_component(x, amp3, sig3, cen3, 3)
+
+    return h0 + h1 + h2 + h3 
+
+def gausshermite_4(x, 
+                   amp0, 
+                   sig0, 
+                   cen0, 
+                   amp1, 
+                   sig1, 
+                   cen1, 
+                   amp2, 
+                   sig2, 
+                   cen2, 
+                   amp3, 
+                   sig3, 
+                   cen3, 
+                   amp4, 
+                   sig4, 
+                   cen4):
+
+    h0 = gausshermite_component(x, amp0, sig0, cen0, 0)
+    h1 = gausshermite_component(x, amp1, sig1, cen1, 1)
+    h2 = gausshermite_component(x, amp2, sig2, cen2, 2)
+    h3 = gausshermite_component(x, amp3, sig3, cen3, 3)
+    h4 = gausshermite_component(x, amp4, sig4, cen4, 4)
+
+    return h0 + h1 + h2 + h3 + h4 
+
+def gausshermite_5(x, 
+                   amp0, 
+                   sig0, 
+                   cen0, 
+                   amp1, 
+                   sig1, 
+                   cen1, 
+                   amp2, 
+                   sig2, 
+                   cen2, 
+                   amp3, 
+                   sig3, 
+                   cen3, 
+                   amp4, 
+                   sig4, 
+                   cen4, 
+                   amp5, 
+                   sig5, 
+                   cen5):   
+
+    h0 = gausshermite_component(x, amp0, sig0, cen0, 0)
+    h1 = gausshermite_component(x, amp1, sig1, cen1, 1)
+    h2 = gausshermite_component(x, amp2, sig2, cen2, 2)
+    h3 = gausshermite_component(x, amp3, sig3, cen3, 3)
+    h4 = gausshermite_component(x, amp4, sig4, cen4, 4)
+    h5 = gausshermite_component(x, amp5, sig5, cen5, 5)
+
+    return h0 + h1 + h2 + h3 + h4 + h5 
+
+def gausshermite_6(x, 
+                   amp0, 
+                   sig0, 
+                   cen0, 
+                   amp1, 
+                   sig1, 
+                   cen1, 
+                   amp2, 
+                   sig2, 
+                   cen2, 
+                   amp3, 
+                   sig3, 
+                   cen3, 
+                   amp4, 
+                   sig4, 
+                   cen4, 
+                   amp5, 
+                   sig5, 
+                   cen5, 
+                   amp6, 
+                   sig6, 
+                   cen6):
+
+    h0 = gausshermite_component(x, amp0, sig0, cen0, 0)
+    h1 = gausshermite_component(x, amp1, sig1, cen1, 1)
+    h2 = gausshermite_component(x, amp2, sig2, cen2, 2)
+    h3 = gausshermite_component(x, amp3, sig3, cen3, 3)
+    h4 = gausshermite_component(x, amp4, sig4, cen4, 4)
+    h5 = gausshermite_component(x, amp5, sig5, cen5, 5)
+    h6 = gausshermite_component(x, amp6, sig6, cen6, 6)
+
+    return h0 + h1 + h2 + h3 + h4 + h5 + h6 
+
 
 def rebin(wa, fl, er, n):
     
     """ 
     Bins up the spectrum by averaging the values of every n pixels. 
     """ 
+
     remain = -(len(wa) % n) or None
 
     wa = wa[:remain].reshape(-1, n)
@@ -102,16 +264,14 @@ class line_props(object):
         self.redchi = redchi
         self.eqw = eqw 
       
-def resid(p=None, 
+def resid(params=None, 
           x=None, 
           model=None, 
           data=None, 
           sigma=None, 
           **kwargs):
 
-    # print p['amplitude'].value,    p['exponent'].value,    p['fe_norm'].value,    p['fe_sd'].value,    p['fe_shift'].value
-
-    mod = model.eval(params=p, x=x, **kwargs)
+    mod = model.eval(params=params, x=x, **kwargs)
     
     if data is not None:
         resids = mod - data    
@@ -123,7 +283,6 @@ def resid(p=None,
             return resids
     else:
         return mod
-
 
 
 def wave2doppler(w, w0):
@@ -146,14 +305,13 @@ def doppler2wave(v, w0):
 
     return w_equiv
 
-def PseudoContinuum(amplitude, 
-                    exponent, 
+def PseudoContinuum(x, 
+                    amplitude,
+                    exponent,
                     fe_norm,
                     fe_sd,
                     fe_shift,
-                    x,  
                     sp_fe):
- 
  
     gauss = Gaussian1DKernel(stddev=fe_sd)
 
@@ -171,9 +329,7 @@ def PseudoContinuum(amplitude,
 
     return fe_norm * fe_flux + amp*x**exponent
 
-def PLModel(amplitude,
-            exponent,
-            x):
+def PLModel(x, amplitude, exponent):
 
     # should probably change this to 1350 when fitting CIV
     amp = amplitude * 5000.0**(-exponent) 
@@ -265,7 +421,9 @@ def plot_fit(wav=None,
              verbose=True,
              reject_outliers = False,  
              reject_width = 20,
-             reject_sigma = 3.0):
+             reject_sigma = 3.0,
+             gh_order=None,
+             xscale=1.0):
 
     if plot_region.unit == (u.km/u.s):
         plot_region = doppler2wave(plot_region, w0)
@@ -286,6 +444,7 @@ def plot_fit(wav=None,
 
     fit = fig.add_subplot(5,1,1)
     fit.set_xticklabels( () )
+
     residuals = fig.add_subplot(5,1,2)
     
     eb = fig.add_subplot(5,1,3)
@@ -297,16 +456,28 @@ def plot_fit(wav=None,
 
     # Mark continuum fitting region
     # Doesn't make sense to transform to wave and then back to velocity but I'm being lazy.
-    # Check if continuum is given in wavelength or doppler units
     if continuum_region[0].unit == (u.km/u.s):
         continuum_region[0] = doppler2wave(continuum_region[0], w0)
     if continuum_region[1].unit == (u.km/u.s):
         continuum_region[1] = doppler2wave(continuum_region[1], w0)
 
-    # Region where equivalent width etc. calculated.
+    # set yaxis range 
+    fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
-    func_max = np.max(integrand(vdat))
-    
+    func_max = np.max(integrand(wave2doppler(wav[fitting], w0).value/xscale))
+    fit.set_ylim(-0.3*func_max, 1.3*func_max)
+    eb.set_ylim(fit.get_ylim())
+    residuals.set_ylim(-8,8)
+    fs.set_ylim(-1*func_max, 2*func_max)
+
+    # set xaxis range 
+    plotting_limits = wave2doppler(plot_region, w0)
+    fit.set_xlim(plotting_limits[0].value, plotting_limits[1].value)
+    residuals.set_xlim(fit.get_xlim())
+    eb.set_xlim(fit.get_xlim())
+    fs.set_xlim(wav.min().value, wav.max().value)
+
+    # Lines to mark region where parameters calculated 
     eb.axvline(line_region[0].value, color='black', linestyle='--')
     eb.axvline(line_region[1].value, color='black', linestyle='--')
 
@@ -316,15 +487,14 @@ def plot_fit(wav=None,
     fs.axvline(doppler2wave(line_region[0], w0).value, color='black', linestyle='--')
     fs.axvline(doppler2wave(line_region[1], w0).value, color='black', linestyle='--')
 
+    # horizontal line at zero 
     fit.axhline(0, color='black', linestyle='--')
     fs.axhline(0, color='black', linestyle='--')
     eb.axhline(0, color='black', linestyle='--')
-    
+    residuals.axhline(0.0, color='black', linestyle='--')
+
     # Mark fitting region
     fr = wave2doppler(fitting_region, w0)
-
-    # set y axis scale
-    fit.set_ylim(-0.3*func_max, 1.3*func_max)
 
     # Mask out regions
     xdat_masking = np.arange(xdat.min().value, xdat.max().value, 0.05)*(u.AA)
@@ -387,25 +557,15 @@ def plot_fit(wav=None,
         eb.axvspan(vdat1_masking[item].min(), vdat1_masking[item].max(), alpha=0.4, color='powderblue')  
         fs.axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, alpha=0.4, color='powderblue')    
 
-    line, = fit.plot(np.sort(vdat.value), resid(pars, np.sort(vdat.value), mod), color='black', lw=2)
+    line, = fit.plot(np.sort(vdat.value), resid(pars, np.sort(vdat.value/xscale), mod), color='black', lw=2)
 
-    plotting_limits = wave2doppler(plot_region, w0)
-    fit.set_xlim(plotting_limits[0].value, plotting_limits[1].value)
-
-    # residuals.errorbar(vdat.value, (ydat - resid(pars, vdat.value, mod)) / yerr, yerr=1, linestyle='', alpha=0.4)
-    # residuals.plot(vdat.value, (ydat - resid(pars, vdat.value, mod)) / yerr, color='black', lw=1)
     residuals.scatter(vdat.value, 
-                     (ydat - resid(pars, vdat.value, mod)) / yerr, 
+                     (ydat - resid(pars, vdat.value/xscale, mod)) / yerr, 
                       alpha=0.9, 
                       edgecolor='None', 
                       s=5, 
                       facecolor='black')
-    # residuals.plot(vdat.value, median_filter((ydat - resid(pars, vdat.value, mod)) / yerr, 3.0), color='black')
-
-    residuals.axhline(0.0, color='black', linestyle='--')
-
-    residuals.set_ylim(-8,8)
-    residuals.set_xlim(fit.get_xlim())
+    
 
     # plot model components
 
@@ -445,7 +605,6 @@ def plot_fit(wav=None,
 
     if fit_model == 'Hb': 
  
-
 
         g = GaussianModel()
         p = g.make_params()
@@ -652,14 +811,39 @@ def plot_fit(wav=None,
                  mod_broad_ha.eval(pars_broad_ha, x=np.sort(vdat.value)),
                  c='black',
                  linestyle='--',
-                 lw=2)                          
-    
-      
-    eb.errorbar(vdat.value, ydat, yerr=yerr, linestyle='', alpha=0.5, color='grey')
-    eb.plot(np.sort(vdat.value), resid(pars, np.sort(vdat.value), mod), color='black', lw=2)
-    eb.set_xlim(fit.get_xlim())
-    eb.set_ylim(fit.get_ylim())
+                 lw=2)     
 
+    if fit_model == 'GaussHermite':
+
+        i = 0 
+        
+        while i <= gh_order:
+            
+            flux_com = gausshermite_component(vdat.value/xscale, 
+                                              pars['amp{}'.format(i)].value, 
+                                              pars['sig{}'.format(i)].value, 
+                                              pars['cen{}'.format(i)].value, 
+                                              i)
+    
+            fit.plot(vdat.value, flux_com, color='gold', lw=1)
+             
+            i += 1 
+
+    # plot error bars and model  
+    eb.errorbar(vdat.value, 
+                ydat, 
+                yerr=yerr, 
+                linestyle='', 
+                alpha=0.5, 
+                color='grey')
+
+    eb.plot(np.sort(vdat.value), 
+            resid(pars, np.sort(vdat.value/xscale), mod), 
+            color='black', 
+            lw=2)
+    
+    
+    # Set labels 
     fit.set_ylabel(r'F$_\lambda$', fontsize=12)
     eb.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=10)
     eb.set_ylabel(r'F$_\lambda$', fontsize=12)
@@ -667,22 +851,29 @@ def plot_fit(wav=None,
 
     #######################################
 
+    # histogram of residuals 
+
     fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
     xdat = wav[fitting]
     vdat = wave2doppler(xdat, w0)
     ydat = flux[fitting]
     yerr = err[fitting]
     hg = fig.add_subplot(5,1,4)
-    hg.hist((ydat - resid(pars, vdat.value, mod)) / yerr, bins=np.arange(-5,5,0.25), normed=True, edgecolor='None', facecolor='lightgrey')
+    hg.hist((ydat - resid(pars, vdat.value/xscale, mod)) / yerr, 
+            bins=np.arange(-5,5,0.25), 
+            normed=True, 
+            edgecolor='None', 
+            facecolor='lightgrey')
     x_axis = np.arange(-5, 5, 0.001)
     hg.plot(x_axis, norm.pdf(x_axis,0,1), color='black', lw=2)
 
 
     #########################################
 
+    # plt full spectrum 
     fs.plot(wav, median_filter(flux, 5), color='black', lw=1)
-    fs.set_xlim(wav.min().value, wav.max().value)
-    fs.set_ylim(-1*func_max, 2*func_max)
+    
+    
 
 
     ########################################################
@@ -761,7 +952,7 @@ def plot_fit(wav=None,
 
     return None
 
-## Make a simpler plot to display with d3. 
+# Make a simpler plot to display with d3. 
 
 def plot_fit_d3(wav=None,
                 flux=None,
@@ -782,7 +973,8 @@ def plot_fit_d3(wav=None,
                 mask_negflux = True,
                 fit_model='MultiGauss',
                 hb_narrow=True,
-                verbose=True):
+                verbose=True,
+                xscale=1.0):
 
 
     if plot_region.unit == (u.km/u.s):
@@ -1081,8 +1273,6 @@ def plot_fit_d3(wav=None,
     return None
 
 
-
-
 def fit_line(wav,
              dw,
              flux,
@@ -1095,6 +1285,7 @@ def fit_line(wav,
              line_region=[6400,6800]*u.AA,
              nGaussians=0,
              nLorentzians=1,
+             gh_order=6,
              maskout=None,
              verbose=True,
              plot=True,
@@ -1232,9 +1423,6 @@ def fit_line(wav,
         print 'S/N per pixel in continuum: {0:.2f}'.format(snr) 
         
 
-
-
-
     ##############################################################################################
 
 
@@ -1281,7 +1469,6 @@ def fit_line(wav,
                 if verbose:
                     print out.message  
                     print fit_report(bkgdpars)
-                    print out.nfev
 
             except TypeError as e: 
 
@@ -1542,7 +1729,7 @@ def fit_line(wav,
                     xdat_plotting = np.arange(xdat_cont.min(), xdat_cont.max(), 1)
         
                     axs[0].plot(xdat_plotting, 
-                                resid(p=bkgdpars, 
+                                resid(params=bkgdpars, 
                                       x=xdat_plotting, 
                                       model=bkgdmod, 
                                       sp_fe=sp_fe), 
@@ -1550,7 +1737,7 @@ def fit_line(wav,
                                 lw=2)
         
                     axs[1].plot(xdat_plotting, 
-                                resid(p=bkgdpars, 
+                                resid(params=bkgdpars, 
                                       x=xdat_plotting, 
                                       model=bkgdmod, 
                                       sp_fe=sp_fe), 
@@ -1573,7 +1760,7 @@ def fit_line(wav,
                     axs[0].set_xlim(xdat_cont.min() - 50.0, xdat_cont.max() + 50.0)
                     axs[1].set_xlim(xdat_cont.min() - 50.0, xdat_cont.max() + 50.0)
                     
-                    func_vals = resid(p=bkgdpars, 
+                    func_vals = resid(params=bkgdpars, 
                                       x=xdat_cont, 
                                       model=bkgdmod, 
                                       sp_fe=sp_fe)
@@ -1628,10 +1815,10 @@ def fit_line(wav,
 
                     
                     axs[2].scatter(xdat_cont, 
-                                  (ydat_cont - resid(p=bkgdpars, 
-                                                x=xdat_cont, 
-                                                model=bkgdmod, 
-                                                sp_fe=sp_fe)) / yerr_cont, 
+                                  (ydat_cont - resid(params=bkgdpars, 
+                                                     x=xdat_cont, 
+                                                     model=bkgdmod, 
+                                                     sp_fe=sp_fe)) / yerr_cont, 
                                   edgecolor='None', 
                                   s=15, 
                                   facecolor='black')
@@ -1644,7 +1831,7 @@ def fit_line(wav,
                     axs[3].plot(wav.value, flux, color='grey')
                     
                     axs[3].plot(xdat_cont, 
-                                resid(p=bkgdpars, 
+                                resid(params=bkgdpars, 
                                       x=xdat_cont, 
                                       model=bkgdmod, 
                                       sp_fe=sp_fe), 
@@ -1747,7 +1934,7 @@ def fit_line(wav,
             yerr_cont = np.concatenate((yerr_blue, yerr_red))
 
             bkgdmod = Model(PLModel, 
-                            param_names=['amplitude','exponent'], 
+                            param_names='params', 
                             independent_vars=['x']) 
 
             bkgdpars = bkgdmod.make_params()
@@ -1831,9 +2018,10 @@ def fit_line(wav,
     cont_pars['exponent'].value = bkgdpars['exponent'].value
     cont_pars['amplitude'].value = bkgdpars['amplitude'].value  
 
-    mono_flux = resid(p=cont_pars, 
+    mono_flux = resid(params=cont_pars, 
                       x=[mono_lum_wav.value], 
                       model=cont_mod)[0]
+
   
     mono_flux = mono_flux / spec_norm
 
@@ -1847,22 +2035,39 @@ def fit_line(wav,
     ######################################################################################################################
 
     # subtract continuum, define region for fitting
-    xdat = wav[fitting]
-    yerr = err[fitting]
-    vdat = wave2doppler(xdat, w0)
 
-    
+    # if fitting gauss hermite model for CIV, we also fit in the continuum regions to extrapolate through
+    # red shelf. 
+
+    if fit_model == 'GaussHermite':
+
+        # concatentate drops the units, so have to put these back in 
+        xdat = np.concatenate((wav[blue_inds], wav[fitting], wav[red_inds]))
+        yerr = np.concatenate((err[blue_inds], err[fitting], err[red_inds]))
+        ydat = np.concatenate((flux[blue_inds], flux[fitting], flux[red_inds]))
+
+        xdat = xdat.value * u.AA
+        vdat = wave2doppler(xdat, w0)
+        
+
+    else:
+
+        xdat = wav[fitting] 
+        yerr = err[fitting]
+        vdat = wave2doppler(xdat, w0)
+        ydat = flux[fitting]
+   
 
     if subtract_fe is True:
-        ydat = flux[fitting] - resid(p=bkgdpars, 
-                                     x=xdat.value, 
-                                     model=bkgdmod,
-                                     sp_fe=sp_fe)
+        ydat = ydat - resid(params=bkgdpars, 
+                            x=xdat.value, 
+                            model=bkgdmod,
+                            sp_fe=sp_fe)
     
     if subtract_fe is False:
-        ydat = flux[fitting] -  resid(p=bkgdpars, 
-                                      x=xdat.value, 
-                                      model=bkgdmod)
+        ydat = ydat -  resid(params=bkgdpars, 
+                             x=xdat.value, 
+                             model=bkgdmod)
 
     if len(vdat) == 0:
         
@@ -1951,6 +2156,8 @@ def fit_line(wav,
     
     if fit_model == 'MultiGauss':
 
+        xscale = 1.0 
+
         # Make model 
         bkgd = ConstantModel()
         mod = bkgd
@@ -1972,14 +2179,68 @@ def fit_line(wav,
             pars['g{}_amplitude'.format(i)].min = 0.0
             pars['g{}_sigma'.format(i)].min = 1000.0
             pars['g{}_sigma'.format(i)].max = 10000.0
+
+    elif fit_model == 'GaussHermite':
+
+        # Calculate mean and variance
+        p = ydat / np.sum(ydat)
+        m = np.sum(vdat * p)
+        v = np.sum(p * (vdat-m)**2)
+        xscale = np.sqrt(v).value 
         
-        # if nGaussians == 2:
-        #     pars['g1_center'].set(expr = 'g0_center')
-        # if nGaussians == 3:
-        #     pars['g1_center'].set(expr = 'g0_center')
-        #     pars['g2_center'].set(expr = 'g0_center')
+        param_names = []
+
+        for i in range(gh_order + 1):
+            
+            param_names.append('amp{}'.format(i))
+            param_names.append('sig{}'.format(i))
+            param_names.append('cen{}'.format(i))
+
+        if gh_order == 0: 
+ 
+            mod = Model(gausshermite_0, independent_vars=['x'], param_names=param_names) 
+    
+        if gh_order == 1: 
+ 
+            mod = Model(gausshermite_1, independent_vars=['x'], param_names=param_names) 
+     
+        if gh_order == 2: 
+ 
+            mod = Model(gausshermite_2, independent_vars=['x'], param_names=param_names) 
+     
+        if gh_order == 3: 
+ 
+            mod = Model(gausshermite_3, independent_vars=['x'], param_names=param_names) 
+     
+        if gh_order == 4: 
+ 
+            mod = Model(gausshermite_4, independent_vars=['x'], param_names=param_names) 
+     
+        if gh_order == 5: 
+ 
+            mod = Model(gausshermite_5, independent_vars=['x'], param_names=param_names) 
+
+        if gh_order == 6: 
+ 
+            mod = Model(gausshermite_6, independent_vars=['x'], param_names=param_names) 
+
+        pars = mod.make_params()
+
+        for i in range(gh_order + 1):
+
+            pars['amp{}'.format(i)].value = 1.0
+            pars['sig{}'.format(i)].value = 1.0
+            pars['cen{}'.format(i)].value = 0.0
+
+            pars['cen{}'.format(i)].min = wave2doppler(wav[fitting], w0).min().value / xscale
+            pars['cen{}'.format(i)].max = wave2doppler(wav[fitting], w0).max().value / xscale
+
+            pars['sig{}'.format(i)].min = 0.1
+
+            pars['amp{}'.format(i)].min = 0.0
 
 
+        
     elif fit_model == 'Ha':
 
         """
@@ -1997,6 +2258,8 @@ def fit_line(wav,
         Also fit Boroson and Green iron template 
 
         """
+
+        xscale = 1.0 
 
         mod = GaussianModel(prefix='ha_n_')  
 
@@ -2116,6 +2379,8 @@ def fit_line(wav,
         Need to be careful
 
         """
+
+        xscale = 1.0 
 
         mod = GaussianModel(prefix='oiii_4959_n_')
 
@@ -2238,9 +2503,6 @@ def fit_line(wav,
         vdat = vdat[posflux] 
     
     # Messes up fit if have negative/zero weights 
-
-    # import ipdb; ipdb.set_trace() 
-
     good_pix = (yerr > 0.0)
     
     xdat = xdat[good_pix]
@@ -2270,18 +2532,30 @@ def fit_line(wav,
         ydat = ydat[mask]
         yerr = yerr[mask]
         vdat = vdat[mask]
-    
 
     out = minimize(resid,
                    pars,
-                   args=(np.asarray(vdat), mod, ydat, yerr),
-                   method = fitting_method)
-
-
+                   kws={'x':np.asarray(vdat.value/xscale), 
+                        'model':mod, 
+                        'data':ydat,
+                        'sigma':yerr},
+                   method=fitting_method)
     if verbose:
     
-        print out.message
-        print fit_report(pars)
+        print out.message 
+        
+        if fit_model == 'GaussHermite':
+
+            for key, value in pars.valuesdict().items():
+                if 'cen' in key:
+                    print key, value * xscale
+                else:
+                    print key, value
+
+        else:
+
+            print fit_report(pars)
+
 
     if save_dir is not None:
         
@@ -2300,13 +2574,13 @@ def fit_line(wav,
 
 
         if subtract_fe is True:
-            flux_dump = flux - resid(p=bkgdpars, 
+            flux_dump = flux - resid(params=bkgdpars, 
                                      x=wav.value, 
                                      model=bkgdmod,
                                      sp_fe=sp_fe)
         
         if subtract_fe is False:
-            flux_dump = flux - resid(p=bkgdpars, 
+            flux_dump = flux - resid(params=bkgdpars, 
                                      x=wav.value, 
                                      model=bkgdmod)
 
@@ -2325,7 +2599,6 @@ def fit_line(wav,
         fittxt += plot_title + '\n \n'
         fittxt += r'Converged with chi-squared = ' + str(out.chisqr) + ', DOF = ' + str(out.nfree) + '\n \n'
         fittxt += fit_report(pars)
-    
 
         with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
             f.write(fittxt) 
@@ -2385,7 +2658,7 @@ def fit_line(wav,
         line_region = wave2doppler(line_region, w0)
 
     dv = 1.0 # i think if this was anything else might need to change intergration.
-    xs = np.arange(line_region.value[0], line_region[1].value, dv) 
+    xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
 
     norm = np.sum(integrand(xs) * dv)
     pdf = integrand(xs) / norm
@@ -2417,19 +2690,20 @@ def fit_line(wav,
 
     # Equivalent width
     flux_line = integrand(xs)
-    xs_wav = doppler2wave(xs*(u.km/u.s), w0)
+    xs_wav = doppler2wave(xs*xscale*(u.km/u.s), w0)
  
     if subtract_fe is True:
-        flux_bkgd = resid(p=bkgdpars, 
+        flux_bkgd = resid(params=bkgdpars, 
                           x=xs_wav.value, 
                           model=bkgdmod,
                           sp_fe=sp_fe)
     
     if subtract_fe is False:
-        flux_bkgd = resid(p=bkgdpars, 
+        flux_bkgd = resid(params=bkgdpars, 
                           x=xs_wav.value, 
                           model=bkgdmod)
     
+
 
     f = (flux_line + flux_bkgd) / flux_bkgd
     eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
@@ -2595,25 +2869,26 @@ def fit_line(wav,
             """     
             
             if verbose: 
-                if pars['hb_n_sigma'].vary is True:
-                    print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['hb_n_sigma'].value * 2.35, 
-                                                                                                                      pars['hb_n_sigma'].init_value * 2.35, 
-                                                                                                                      pars['hb_n_sigma'].vary, 
-                                                                                                                      pars['hb_n_sigma'].min * 2.35, 
-                                                                                                                      pars['hb_n_sigma'].max * 2.35) 
+
+                if pars['oiii_5007_n_sigma'].vary is True:
+
+
+                    print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(pars['hb_n_sigma'].value * 2.35, 
+                                                                                                          pars['hb_n_sigma'].init_value * 2.35, 
+                                                                                                          pars['hb_n_sigma'].min * 2.35, 
+                                                                                                          pars['hb_n_sigma'].max * 2.35) 
                 else:
                     print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(pars['hb_n_sigma'].value * 2.35, 
-                                                                     pars['hb_n_sigma'].vary) 
+                                                                     pars['oiii_5007_n_sigma'].vary) 
         
-                if pars['hb_n_center'].vary is True:
-                    print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['hb_n_center'].value, 
+                if pars['oiii_5007_n_center'].vary is True:
+                    print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(pars['hb_n_center'].value, 
                                                                                                                         pars['hb_n_center'].init_value, 
-                                                                                                                        pars['hb_n_center'].vary, 
                                                                                                                         pars['hb_n_center'].min, 
                                                                                                                         pars['hb_n_center'].max) 
                 else:
                     print 'Narrow Center = {0:.1f}, Vary = {1}'.format(pars['hb_n_center'].value, 
-                                                                       pars['hb_n_center'].vary)     
+                                                                       pars['oiii_5007_n_center'].vary)     
 
         else:
 
@@ -2638,10 +2913,10 @@ def fit_line(wav,
         print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum.value)) 
 
     fit_out = {'name':plot_title, 
-               'fwhm':root2 - root1,
-               'sigma': sd,
-               'median': md,
-               'cen': func_center,
+               'fwhm':(root2 - root1)*xscale,
+               'sigma': sd*xscale,
+               'median': md*xscale,
+               'cen': func_center*xscale,
                'eqw': eqw,
                'broad_lum':np.log10(broad_lum.value),
                'narrow_fwhm':narrow_fwhm,
@@ -2660,13 +2935,31 @@ def fit_line(wav,
                'dv':spec_dv, 
                'monolum':np.log10(mono_lum.value)}
 
-    # print plot_title 
-    # print 'peak_ha = {0:.2f}*(u.km/u.s),'.format(func_center)
-    # print 'fwhm_ha = {0:.2f}*(u.km/u.s),'.format(root2 - root1)
-    # print 'median_ha = {0:.2f}*(u.km/u.s),'.format(md)
-    # print 'sigma_ha = {0:.2f}*(u.km/u.s),'.format(sd)
-    # print 'chired_ha = {0:.2f},'.format(out.redchi)
-    # print 'eqw_ha = {0:.2f}*u.AA,'.format(eqw)
+    if verbose:
+
+        print  fit_out['name'] + '\n'\
+              'Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm']), \
+              'Broad sigma: {0:.2f} km/s \n'.format(fit_out['sigma']), \
+              'Broad median: {0:.2f} km/s \n'.format(fit_out['median']), \
+              'Broad centroid: {0:.2f} km/s \n'.format(fit_out['cen']), \
+              'Broad EQW: {0:.2f} A \n'.format(fit_out['eqw']), \
+              'Broad luminosity {0:.2f} erg/s \n'.format(fit_out['broad_lum']), \
+              'Narrow FWHM: {0:.2f} km/s \n'.format(fit_out['narrow_fwhm']), \
+              'Narrow luminosity: {0:.2f} km/s \n'.format(fit_out['narrow_lum']), \
+              'Narrow velocity: {0:.2f} km/s \n'.format(fit_out['narrow_voff']), \
+              'OIII5007 EQW: {0:.2f} A \n'.format(fit_out['oiii_5007_eqw']),\
+              'OIII5007 luminosity {0:.2f} erg/s \n'.format(fit_out['oiii_5007_lum']),\
+              'OIII5007 narrow luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_n_lum']),\
+              'OIII5007 broad luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_b_lum']),\
+              'OIII5007 FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_fwhm']),\
+              'OIII5007 narrow FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_n_fwhm']),\
+              'OIII5007 broad FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_b_fwhm']),\
+              'OIII5007 broad velocity: {0:.2f} km/s \n'.format(fit_out['oiii_5007_b_voff']),\
+              'Reduced chi-squared: {0:.2f} \n'.format(fit_out['redchi']),\
+              'S/N: {0:.2f} \n'.format(fit_out['snr']), \
+              'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
+              'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])          
+
 
     if save_dir is not None:
 
@@ -2690,13 +2983,13 @@ def fit_line(wav,
     if plot is True:
 
         if subtract_fe is True:
-            flux_plot = flux - resid(p=bkgdpars, 
+            flux_plot = flux - resid(params=bkgdpars, 
                                      x=wav.value, 
                                      model=bkgdmod,
                                      sp_fe=sp_fe)
         
         if subtract_fe is False:
-            flux_plot = flux - resid(p=bkgdpars, 
+            flux_plot = flux - resid(params=bkgdpars, 
                                      x=wav.value, 
                                      model=bkgdmod)
 
@@ -2722,7 +3015,9 @@ def fit_line(wav,
                  verbose=verbose,
                  reject_outliers=reject_outliers,  
                  reject_width=reject_width,
-                 reject_sigma=reject_sigma)
+                 reject_sigma=reject_sigma,
+                 gh_order = gh_order,
+                 xscale=xscale)
 
         plot_fit_d3(wav=wav,
                     flux = flux_plot,
@@ -2743,7 +3038,8 @@ def fit_line(wav,
                     mask_negflux = mask_negflux,
                     fit_model=fit_model,
                     hb_narrow=hb_narrow,
-                    verbose=verbose)
+                    verbose=verbose,
+                    xscale=xscale)
 
     return fit_out 
 
