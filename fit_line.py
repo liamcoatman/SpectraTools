@@ -1933,8 +1933,10 @@ def fit_line(wav,
             ydat_cont = np.concatenate((ydat_blue, ydat_red))
             yerr_cont = np.concatenate((yerr_blue, yerr_red))
 
+       
+
             bkgdmod = Model(PLModel, 
-                            param_names='params', 
+                            param_names=['amplitude','exponent'], 
                             independent_vars=['x']) 
 
             bkgdpars = bkgdmod.make_params()
