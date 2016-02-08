@@ -2087,8 +2087,8 @@ def fit_line(wav,
 
         else: 
 
-            pars['ha_n_center'].min = -2000.0
-            pars['ha_n_center'].max = 2000.0
+            pars['ha_n_center'].min = -500.0
+            pars['ha_n_center'].max = 500.0
     
             pars['sii_6731_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6731*u.AA, w0).value))
             pars['sii_6717_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6717*u.AA, w0).value))
@@ -2173,8 +2173,8 @@ def fit_line(wav,
             pars['hb_b_{}_amplitude'.format(i)].min = 0.0  
         
 
-        pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 2000.0
-        pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 2000.0
+        pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 500.0
+        pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 500.0
         if hb_narrow is True: 
             pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
         pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
