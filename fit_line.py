@@ -10,7 +10,6 @@ Fit emission line with model.
 from __future__ import division
 
 import numpy as np
-from rebin_spectra import rebin_spectra
 import astropy.units as u
 from lmfit.models import GaussianModel, LorentzianModel, PowerLawModel, ConstantModel
 from lmfit import minimize, Parameters, fit_report, Model
@@ -200,7 +199,12 @@ def rebin(wa, fl, er, n):
     
     """ 
     Bins up the spectrum by averaging the values of every n pixels. 
+    Sometimes get negative or zero errors in array
+    Assign these large weights 
     """ 
+    
+    # not sure if this is a good idea or not
+    er[er <= 0.0] = 1.e6 
 
     remain = -(len(wa) % n) or None
 
@@ -1330,6 +1334,7 @@ def fit_line(wav,
     err = err * spec_norm 
 
     # Rebin spectrum 
+
     wav, flux, err = rebin(wav, flux, err, n_rebin)
 
     # index of the region we want to fit
@@ -2850,7 +2855,7 @@ def fit_line(wav,
         
         oiii_5007_fwhm = oiii_5007_root2 - oiii_5007_root1
 
-        narrow_voff = pars['hb_n_center'].value 
+        
          
         if hb_narrow is True:
 
@@ -2864,6 +2869,8 @@ def fit_line(wav,
                         (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm
 
             narrow_fwhm = pars['hb_n_fwhm'].value 
+
+            narrow_voff = pars['hb_n_center'].value 
         
                 #######################################################################
             """
@@ -2896,6 +2903,7 @@ def fit_line(wav,
 
             narrow_lum = -9999.99 * (u.erg / u.s)          
             narrow_fwhm = -9999.99 
+            narrow_voff = -9999.99
     else: 
       
         narrow_lum = -9999.99 * (u.erg / u.s)
@@ -2960,7 +2968,28 @@ def fit_line(wav,
               'Reduced chi-squared: {0:.2f} \n'.format(fit_out['redchi']),\
               'S/N: {0:.2f} \n'.format(fit_out['snr']), \
               'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
-              'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])          
+              'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])
+
+
+        print  fit_out['name'] + ','\
+              '{0:.2f},'.format(fit_out['fwhm']), \
+              '{0:.2f},'.format(fit_out['sigma']), \
+              '{0:.2f},'.format(fit_out['median']), \
+              '{0:.2f},'.format(fit_out['cen']), \
+              '{0:.2f},'.format(fit_out['eqw']), \
+              '{0:.2f},'.format(fit_out['broad_lum']), \
+              '{0:.2f},'.format(fit_out['narrow_fwhm']), \
+              '{0:.2f},'.format(fit_out['narrow_lum']), \
+              '{0:.2f},'.format(fit_out['narrow_voff']), \
+              '{0:.2f},'.format(fit_out['oiii_5007_eqw']),\
+              '{0:.2f},'.format(fit_out['oiii_5007_lum']),\
+              '{0:.2f},'.format(fit_out['oiii_5007_n_lum']),\
+              '{0:.2f},'.format(fit_out['oiii_5007_b_lum']),\
+              '{0:.2f},'.format(fit_out['oiii_fwhm']),\
+              '{0:.2f},'.format(fit_out['oiii_n_fwhm']),\
+              '{0:.2f},'.format(fit_out['oiii_b_fwhm']),\
+              '{0:.2f},'.format(fit_out['oiii_5007_b_voff']),\
+              '{0:.2f}'.format(fit_out['redchi'])          
 
 
     if save_dir is not None:
