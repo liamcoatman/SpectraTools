@@ -978,7 +978,8 @@ def plot_fit_d3(wav=None,
                 fit_model='MultiGauss',
                 hb_narrow=True,
                 verbose=True,
-                xscale=1.0):
+                xscale=1.0,
+                gh_order=None):
 
 
     if plot_region.unit == (u.km/u.s):
@@ -1009,13 +1010,14 @@ def plot_fit_d3(wav=None,
 
     # Region where equivalent width etc. calculated.
     integrand = lambda x: mod.eval(params=pars, x=np.array(x))
-    func_max = np.max(integrand(vdat))
+    fitting = (wav > fitting_region[0]) & (wav < fitting_region[1])
+    func_max = np.max(integrand(wave2doppler(wav[fitting], w0).value/xscale))
    
     # set y axis scale
     ax.set_ylim(-0.3*func_max, 1.3*func_max)
 
     line, = ax.plot(np.sort(vdat.value), 
-                     resid(pars, np.sort(vdat.value), mod),
+                     resid(pars, np.sort(vdat.value) / xscale, mod),
                      color='black', 
                      lw=2)
 
@@ -1265,7 +1267,23 @@ def plot_fit_d3(wav=None,
                  mod_broad_ha.eval(pars_broad_ha, x=np.sort(vdat.value)),
                  c='black',
                  linestyle='--',
-                 lw=2)                          
+                 lw=2)          
+
+    if fit_model == 'GaussHermite':
+
+        i = 0 
+        
+        while i <= gh_order:
+            
+            flux_com = gausshermite_component(vdat.value/xscale, 
+                                              pars['amp{}'.format(i)].value, 
+                                              pars['sig{}'.format(i)].value, 
+                                              pars['cen{}'.format(i)].value, 
+                                              i)
+    
+            ax.plot(vdat.value, flux_com, color='gold', lw=1)
+             
+            i += 1                 
   
     fig.tight_layout()
 
@@ -1430,6 +1448,22 @@ def fit_line(wav,
 
     ##############################################################################################
 
+    # get rid of nans / infs / negative errors 
+
+    good =(~np.isnan(ydat_blue)) & (~np.isnan(ydat_blue)) & (yerr_blue > 0.0)  
+
+    xdat_blue = xdat_blue[good]
+    ydat_blue = ydat_blue[good]
+    yerr_blue = yerr_blue[good]
+    vdat_blue = vdat_blue[good]
+
+    good =(~np.isnan(ydat_red)) & (~np.isnan(ydat_red)) & (yerr_red > 0.0)  
+
+    xdat_red = xdat_red[good]
+    ydat_red = ydat_red[good]
+    yerr_red = yerr_red[good]
+    vdat_red = vdat_red[good]
+
 
     if bkgd_median is True:
 
@@ -1488,6 +1522,7 @@ def fit_line(wav,
                            'broad_lum':-9999.99,
                            'narrow_fwhm':-9999.99,
                            'narrow_lum':-9999.99,
+                           'narrow_voff':-9999.99,
                            'oiii_5007_eqw':-9999.99,
                            'oiii_5007_lum':-9999.99,
                            'oiii_5007_n_lum':-9999.99,
@@ -1583,7 +1618,8 @@ def fit_line(wav,
 
         if len(xdat_blue) + len(xdat_red) == 0:
 
-            print "No flux in continuum fitting regions" 
+            if verbose:
+                print "No flux in continuum fitting regions" 
 
             fit_out = {'name':plot_title, 
                        'fwhm':-9999.99,
@@ -1594,6 +1630,7 @@ def fit_line(wav,
                        'broad_lum':-9999.99,
                        'narrow_fwhm':-9999.99,
                        'narrow_lum':-9999.99,
+                       'narrow_voff':-9999.99,
                        'oiii_5007_eqw':-9999.99,
                        'oiii_5007_lum':-9999.99,
                        'oiii_5007_n_lum':-9999.99,
@@ -1895,6 +1932,7 @@ def fit_line(wav,
                            'broad_lum':-9999.99,
                            'narrow_fwhm':-9999.99,
                            'narrow_lum':-9999.99,
+                           'narrow_voff':-9999.99,
                            'oiii_5007_eqw':-9999.99,
                            'oiii_5007_lum':-9999.99,
                            'oiii_5007_n_lum':-9999.99,
@@ -1975,6 +2013,7 @@ def fit_line(wav,
                            'broad_lum':-9999.99,
                            'narrow_fwhm':-9999.99,
                            'narrow_lum':-9999.99,
+                           'narrow_voff':-9999.99,
                            'oiii_5007_eqw':-9999.99,
                            'oiii_5007_lum':-9999.99,
                            'oiii_5007_n_lum':-9999.99,
@@ -2089,6 +2128,7 @@ def fit_line(wav,
                    'broad_lum':-9999.99,
                    'narrow_fwhm':-9999.99,
                    'narrow_lum':-9999.99,
+                   'narrow_voff':-9999.99,
                    'oiii_5007_eqw':-9999.99,
                    'oiii_5007_lum':-9999.99,
                    'oiii_5007_n_lum':-9999.99,
@@ -2190,9 +2230,17 @@ def fit_line(wav,
     elif fit_model == 'GaussHermite':
 
         # Calculate mean and variance
-        p = ydat / np.sum(ydat)
-        m = np.sum(vdat * p)
-        v = np.sum(p * (vdat-m)**2)
+
+        """
+        Because p isn't a real probability distribution we sometimes get negative 
+        variances if a lot of the flux is negative. 
+        Therefore confine this to only work on the bit of the 
+        spectrum that is positive
+        """
+
+        p = ydat[ydat > 0.0] / np.sum(ydat[ydat > 0.0])
+        m = np.sum(vdat[ydat > 0.0] * p)
+        v = np.sum(p * (vdat[ydat > 0.0]-m)**2)
         xscale = np.sqrt(v).value 
         
         param_names = []
@@ -2246,7 +2294,7 @@ def fit_line(wav,
 
             pars['amp{}'.format(i)].min = 0.0
 
-
+        
         
     elif fit_model == 'Ha':
 
@@ -2855,7 +2903,8 @@ def fit_line(wav,
         
         oiii_5007_fwhm = oiii_5007_root2 - oiii_5007_root1
 
-        
+        narrow_fwhm = pars['oiii_5007_n_sigma'].value * 2.35 
+        narrow_voff = pars['oiii_5007_n_center'].value  - wave2doppler(5008.239*u.AA, w0).value  
          
         if hb_narrow is True:
 
@@ -2868,11 +2917,8 @@ def fit_line(wav,
             narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
                         (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm
 
-            narrow_fwhm = pars['hb_n_fwhm'].value 
-
-            narrow_voff = pars['hb_n_center'].value 
         
-                #######################################################################
+            #######################################################################
             """
             Nicely print out important fitting info
             """     
@@ -2902,8 +2948,7 @@ def fit_line(wav,
         else:
 
             narrow_lum = -9999.99 * (u.erg / u.s)          
-            narrow_fwhm = -9999.99 
-            narrow_voff = -9999.99
+
     else: 
       
         narrow_lum = -9999.99 * (u.erg / u.s)
@@ -2970,26 +3015,40 @@ def fit_line(wav,
               'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
               'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])
 
+        if fit_model == 'Hb':
+            print  fit_out['name'] + ','\
+                  '{0:.2f},'.format(fit_out['fwhm']), \
+                  '{0:.2f},'.format(fit_out['sigma']), \
+                  '{0:.2f},'.format(fit_out['median']), \
+                  '{0:.2f},'.format(fit_out['cen']), \
+                  '{0:.2f},'.format(fit_out['eqw']), \
+                  '{0:.2f},'.format(fit_out['broad_lum']), \
+                  '{0:.2f},'.format(fit_out['narrow_fwhm']), \
+                  '{0:.2f},'.format(fit_out['narrow_lum']), \
+                  '{0:.2f},'.format(fit_out['narrow_voff']), \
+                  '{0:.2f},'.format(fit_out['oiii_5007_eqw']),\
+                  '{0:.2f},'.format(fit_out['oiii_5007_lum']),\
+                  '{0:.2f},'.format(fit_out['oiii_5007_n_lum']),\
+                  '{0:.2f},'.format(fit_out['oiii_5007_b_lum']),\
+                  '{0:.2f},'.format(fit_out['oiii_fwhm']),\
+                  '{0:.2f},'.format(fit_out['oiii_n_fwhm']),\
+                  '{0:.2f},'.format(fit_out['oiii_b_fwhm']),\
+                  '{0:.2f},'.format(fit_out['oiii_5007_b_voff']),\
+                  '{0:.2f}'.format(fit_out['redchi'])          
 
-        print  fit_out['name'] + ','\
-              '{0:.2f},'.format(fit_out['fwhm']), \
-              '{0:.2f},'.format(fit_out['sigma']), \
-              '{0:.2f},'.format(fit_out['median']), \
-              '{0:.2f},'.format(fit_out['cen']), \
-              '{0:.2f},'.format(fit_out['eqw']), \
-              '{0:.2f},'.format(fit_out['broad_lum']), \
-              '{0:.2f},'.format(fit_out['narrow_fwhm']), \
-              '{0:.2f},'.format(fit_out['narrow_lum']), \
-              '{0:.2f},'.format(fit_out['narrow_voff']), \
-              '{0:.2f},'.format(fit_out['oiii_5007_eqw']),\
-              '{0:.2f},'.format(fit_out['oiii_5007_lum']),\
-              '{0:.2f},'.format(fit_out['oiii_5007_n_lum']),\
-              '{0:.2f},'.format(fit_out['oiii_5007_b_lum']),\
-              '{0:.2f},'.format(fit_out['oiii_fwhm']),\
-              '{0:.2f},'.format(fit_out['oiii_n_fwhm']),\
-              '{0:.2f},'.format(fit_out['oiii_b_fwhm']),\
-              '{0:.2f},'.format(fit_out['oiii_5007_b_voff']),\
-              '{0:.2f}'.format(fit_out['redchi'])          
+        else:
+            print  fit_out['name'] + ','\
+                  '{0:.2f},'.format(fit_out['fwhm']), \
+                  '{0:.2f},'.format(fit_out['sigma']), \
+                  '{0:.2f},'.format(fit_out['median']), \
+                  '{0:.2f},'.format(fit_out['cen']), \
+                  '{0:.2f},'.format(fit_out['eqw']), \
+                  '{0:.2f},'.format(fit_out['broad_lum']), \
+                  '{0:.2f},'.format(fit_out['narrow_fwhm']), \
+                  '{0:.2f},'.format(fit_out['narrow_lum']), \
+                  '{0:.2f},'.format(fit_out['narrow_voff']), \
+                  '{0:.2f}'.format(fit_out['redchi'])          
+
 
 
     if save_dir is not None:
@@ -3070,7 +3129,8 @@ def fit_line(wav,
                     fit_model=fit_model,
                     hb_narrow=hb_narrow,
                     verbose=verbose,
-                    xscale=xscale)
+                    xscale=xscale,
+                    gh_order=gh_order)
 
     return fit_out 
 
