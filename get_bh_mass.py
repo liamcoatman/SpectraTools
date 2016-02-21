@@ -57,9 +57,29 @@ def BHMass(line='Ha',
         e1 = 0.0
         e2 = np.power(fwhm_hb, 2.0-1.0) * 2.0 * fwhm_err
         e3 = np.power(l5100, 0.5-1.0) * 0.5 * l5100_err
+ 
+        MBH = p1 * p2 * p3
+
+        MBH_err = MBH * np.sqrt( (e1/p1)**2 + (e2/p2)**2 + (e3/p3)**2 )
+
+    elif line.lower() == 'hb':
+
+        fwhm = fwhm / (1e3*(u.km/u.s))
+        fwhm_err = fwhm_err / (1e3*(u.km/u.s))
+
+        l5100 = l5100 / (1e44*(u.erg/u.s))
+        l5100_err = l5100_err / (1e44*(u.erg/u.s))
+
+        p1 = np.power(10,6.91)
+        p2 = np.power(fwhm, 2)
+        p3 = np.power(l5100, 0.5)
+
+        e1 = 0.0
+        e2 = np.power(fwhm, 2.0-1.0) * 2.0 * fwhm_err
+        e3 = np.power(l5100, 0.5-1.0) * 0.5 * l5100_err
 
         MBH = p1 * p2 * p3
-        MBH_err = MBH * np.sqrt( (e1/p1)**2 + (e2/p2)**2 + (e3/p3)**2 )
+        MBH_err = MBH * np.sqrt( (e1/p1)**2 + (e2/p2)**2 + (e3/p3)**2 )        
 
 
     elif line.lower() == 'civ':
@@ -70,7 +90,7 @@ def BHMass(line='Ha',
         l1350 = l1350 / (1e44*(u.erg/u.s))
         l1350_err = l1350_err / (1e44*(u.erg/u.s))
 
-        if calibration == 'vp06':
+        if calibration.lower() == 'vp06':
 
             # Vestergaard & Peterson 2006
             p1 = np.power(10,6.66)
@@ -81,7 +101,7 @@ def BHMass(line='Ha',
             e2 = np.power(fwhm, 2.0-1.0) * 2.0 * fwhm_err
             e3 = np.power(l1350, 0.53-1.0) * 0.53 * l1350_err
 
-        elif calibration == 'p13':
+        elif calibration.lower() == 'p13':
 
             # Park et al. 2013
             p1 = np.power(10,7.48)
