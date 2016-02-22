@@ -277,6 +277,7 @@ def resid(params=None,
 
     mod = model.eval(params=params, x=x, **kwargs)
     
+    print params 
     if data is not None:
         resids = mod - data    
 
@@ -2587,6 +2588,7 @@ def fit_line(wav,
         ydat = ydat[mask]
         yerr = yerr[mask]
         vdat = vdat[mask]
+    
 
     out = minimize(resid,
                    pars,
@@ -2878,6 +2880,18 @@ def fit_line(wav,
 
 
         flux_line = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
+
+
+        if subtract_fe is True:
+            flux_bkgd = resid(params=bkgdpars, 
+                              x=oiii_5007_n_xs_wav.value, 
+                              model=bkgdmod,
+                              sp_fe=sp_fe)
+    
+        if subtract_fe is False:
+            flux_bkgd = resid(params=bkgdpars, 
+                              x=oiii_5007_n_xs_wav.value, 
+                              model=bkgdmod)
 
         f = (flux_line + flux_bkgd) / flux_bkgd 
         oiii_5007_eqw = (f[:-1] - 1.0) * np.diff(oiii_5007_n_xs_wav.value)
