@@ -276,8 +276,7 @@ def resid(params=None,
           **kwargs):
 
     mod = model.eval(params=params, x=x, **kwargs)
-    
-    print params 
+
     if data is not None:
         resids = mod - data    
 
@@ -2202,6 +2201,9 @@ def fit_line(wav,
         xdat = xdat[mask]
 
     
+
+    # Rescale x axis so everything is of order unity. 
+
     if fit_model == 'MultiGauss':
 
         xscale = 1.0 
@@ -2228,6 +2230,8 @@ def fit_line(wav,
             pars['g{}_sigma'.format(i)].min = 1000.0
             pars['g{}_sigma'.format(i)].max = 10000.0
 
+        # pars['g0_center'].set(expr='g1_center') 
+
     elif fit_model == 'GaussHermite':
 
         # Calculate mean and variance
@@ -2243,7 +2247,8 @@ def fit_line(wav,
         m = np.sum(vdat[ydat > 0.0] * p)
         v = np.sum(p * (vdat[ydat > 0.0]-m)**2)
         xscale = np.sqrt(v).value 
-        
+ 
+
         param_names = []
 
         for i in range(gh_order + 1):
@@ -2649,6 +2654,11 @@ def fit_line(wav,
         err_file = os.path.join(save_dir, 'err.txt')
         parfile = open(err_file, 'wb')
         pickle.dump(err, parfile, -1)
+        parfile.close()
+
+        sd_file = os.path.join(save_dir, 'sd.txt')
+        parfile = open(sd_file, 'wb')
+        pickle.dump(xscale, parfile, -1)
         parfile.close()
 
         fittxt = ''    
