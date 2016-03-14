@@ -1808,17 +1808,11 @@ def fit_line(wav,
                             independent_vars=['x']) 
             
             bkgdpars = bkgdmod.make_params() 
-            bkgdpars['exponent'].value = 1.0
-            bkgdpars['amplitude'].value = 1.0
-            bkgdpars['fe_norm'].value = 0.05 
-            bkgdpars['fe_shift'].value = 0.0
-
+            
             fe_sigma = fe_FWHM / 2.35 
             fe_pix = fe_sigma / (sp_fe.dv * (u.km/u.s))
 
-            bkgdpars['fe_sd'].value = fe_pix.value  
             bkgdpars['fe_sd'].vary = fe_FWHM_vary
-
 
             bkgdpars['fe_norm'].min = 0.0
             bkgdpars['fe_sd'].min = 2000.0 / 2.35 / sp_fe.dv
@@ -1834,8 +1828,7 @@ def fit_line(wav,
                             independent_vars=['x']) 
 
             bkgdpars = bkgdmod.make_params()
-            bkgdpars['exponent'].value = 1.0
-            bkgdpars['amplitude'].value = 1.0 
+            
 
 
         for k, (x, y, er) in enumerate(zip(xdat_cont, ydat_cont, yerr_cont)):
@@ -1849,7 +1842,11 @@ def fit_line(wav,
 
             if subtract_fe is True:
 
-
+                bkgdpars['fe_sd'].value = fe_pix.value  
+                bkgdpars['exponent'].value = 1.0
+                bkgdpars['amplitude'].value = 1.0
+                bkgdpars['fe_norm'].value = 0.05 
+                bkgdpars['fe_shift'].value = 0.0
 
                 out = minimize(resid,
                                bkgdpars,
@@ -1864,6 +1861,9 @@ def fit_line(wav,
                 flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] = flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])]).value, model=bkgdmod, sp_fe=sp_fe)                  
 
             if subtract_fe is False:
+
+                bkgdpars['exponent'].value = 1.0
+                bkgdpars['amplitude'].value = 1.0 
 
                 out = minimize(resid,
                                bkgdpars,
@@ -2166,8 +2166,8 @@ def fit_line(wav,
             pars['g{}_center'.format(i)].min = -5000.0
             pars['g{}_center'.format(i)].max = 5000.0
             pars['g{}_amplitude'.format(i)].min = 0.0
-            pars['g{}_sigma'.format(i)].min = 1000.0
-            pars['g{}_sigma'.format(i)].max = 10000.0
+            pars['g{}_sigma'.format(i)].min = 1000.0 # sometimes might be better if this is relaxed 
+            pars['g{}_sigma'.format(i)].max = 10000.0 
 
         # pars['g0_center'].set(expr='g1_center') 
 
@@ -2292,12 +2292,6 @@ def fit_line(wav,
         pars['ha_n_amplitude'].value = 1000.0  
         for i in range(nGaussians):
             pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
-
-        pars['nii_6548_n_center'].value = wave2doppler(6548*u.AA, w0).value 
-        pars['nii_6584_n_center'].value = wave2doppler(6584*u.AA, w0).value 
-        pars['sii_6717_n_center'].value = wave2doppler(6717*u.AA, w0).value 
-        pars['sii_6731_n_center'].value = wave2doppler(6731*u.AA, w0).value 
-        pars['ha_n_center'].value = ha_narrow_voff
 
         for i in range(nGaussians): 
             pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
@@ -2535,6 +2529,84 @@ def fit_line(wav,
 
         if n_samples > 1:
             print k 
+
+        if fit_model == 'MultiGauss':
+
+            for i in range(nGaussians):
+                
+                pars['g{}_center'.format(i)].value = 0.0
+                pars['g{}_amplitude'.format(i)].value =  1.0 
+                pars['g{}_sigma'.format(i)].value = 1200.0 
+          
+        elif fit_model == 'GaussHermite':
+
+            for i in range(gh_order + 1):
+
+                pars['amp{}'.format(i)].value = 1.0
+                pars['sig{}'.format(i)].value = 1.0
+                pars['cen{}'.format(i)].value = 0.0        
+        
+        elif fit_model == 'Ha':
+
+            pars['nii_6548_n_amplitude'].value = 1000.0
+            pars['nii_6584_n_amplitude'].value = 1000.0
+            pars['sii_6717_n_amplitude'].value = 1000.0 
+            pars['sii_6731_n_amplitude'].value = 1000.0 
+            pars['ha_n_amplitude'].value = 1000.0  
+           
+            for i in range(nGaussians):
+                pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
+    
+            for i in range(nGaussians): 
+                pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
+           
+            pars['nii_6548_n_sigma'].value = ha_narrow_fwhm / 2.35 
+            pars['nii_6584_n_sigma'].value = ha_narrow_fwhm / 2.35
+            pars['sii_6717_n_sigma'].value = ha_narrow_fwhm / 2.35
+            pars['sii_6731_n_sigma'].value = ha_narrow_fwhm / 2.35
+            pars['ha_n_sigma'].value = ha_narrow_fwhm / 2.35 
+    
+            for i in range(nGaussians): 
+                pars['ha_b_{}_sigma'.format(i)].value = 1200.0
+    
+            pars['ha_n_center'].value = ha_narrow_voff 
+            pars['sii_6731_n_center'].value = ha_narrow_voff + wave2doppler(6731*u.AA, w0).value 
+            pars['sii_6717_n_center'].value = ha_narrow_voff + wave2doppler(6717*u.AA, w0).value 
+            pars['nii_6548_n_center'].value = ha_narrow_voff + wave2doppler(6548*u.AA, w0).value 
+            pars['nii_6584_n_center'].value  = ha_narrow_voff + wave2doppler(6584*u.AA, w0).value 
+            
+        elif fit_model == 'Hb':
+    
+            pars['oiii_4959_n_amplitude'].value = 1000.0
+            pars['oiii_5007_n_amplitude'].value = 1000.0
+            pars['oiii_4959_b_amplitude'].value = 1000.0 
+            pars['oiii_5007_b_amplitude'].value = 1000.0 
+            if hb_narrow is True: 
+                pars['hb_n_amplitude'].value = 1000.0  
+            for i in range(nGaussians):
+                pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
+    
+            pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+            pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+            pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+            pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+            if hb_narrow is True: 
+                pars['hb_n_center'].value = 0.0    
+            for i in range(nGaussians): 
+                pars['hb_b_{}_center'.format(i)].value = -100.0  
+    
+            pars['oiii_4959_n_sigma'].value = 800 / 2.35
+            pars['oiii_5007_n_sigma'].value = 800 / 2.35
+            pars['oiii_4959_b_sigma'].value = 1200.0 
+            pars['oiii_5007_b_sigma'].value = 1200.0 
+            if hb_narrow is True: 
+                pars['hb_n_sigma'].value = 800 / 2.35
+            for i in range(nGaussians): 
+                pars['hb_b_{}_sigma'.format(i)].value = 1200.0
+            
+            pars['oiii_4959_b_center_delta'].value = 500.0 
+            pars['oiii_5007_b_amp_delta'].value = 0.1
+            pars['oiii_4959_b_amp_delta'].value = 0.1 
 
         out = minimize(resid,
                        pars,
