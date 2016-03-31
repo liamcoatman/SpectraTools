@@ -239,16 +239,16 @@ def onclick(event):
         
     return None 
 
-def onclick2(event):
+def onclick2(event, w0=4862.721*u.AA):
 
     global ix
     
     ix = event.xdata
-
+    ix = wave2doppler(ix*u.AA, w0).value 
     coords.append(ix)
 
     if len(coords) % 4 == 0:
-        print '[[{0:.0f}, {1:.0f}]*u.AA,[{2:.0f}, {3:.0f}]*u.AA]'.format(coords[-4], coords[-3], coords[-2], coords[-1])  
+        print '[[{0:.0f}, {1:.0f}]*(u.km/u.s),[{2:.0f}, {3:.0f}]*(u.km/u.s)]'.format(coords[-4], coords[-3], coords[-2], coords[-1])  
         # fig.canvas.mpl_disconnect(cid)
         
     return None 
@@ -332,7 +332,7 @@ def PseudoContinuum(x,
 
     fe_flux = f(x)   
 
-    # so paramter is around 1
+    # so parameter is around 1
     amp = amplitude * 5000.0**(-exponent)
 
     return fe_norm * fe_flux + amp*x**exponent
@@ -1341,7 +1341,7 @@ def fit_line(wav,
              maskout=None,
              verbose=True,
              plot=True,
-             plot_savefig='something.png',
+             plot_savefig=None,
              plot_title='',
              save_dir=None,
              bkgd_median=True,
@@ -1361,7 +1361,9 @@ def fit_line(wav,
              reject_width = 20,
              reject_sigma = 3.0,
              n_samples=1,
-             emission_line='Ha'):
+             emission_line='Ha',
+             pseudo_continuum_fit=False):
+
 
     """
     Fiting and continuum regions given in rest frame wavelengths with
@@ -1387,10 +1389,13 @@ def fit_line(wav,
                 columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'redchi', 'monolum'] 
                 
             if emission_line == 'Hb':
-                columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'oiii_5007_eqw', 'oiii_5007_lum', 'oiii_5007_n_lum', 'oiii_5007_b_lum', 'oiii_fwhm', 'oiii_n_fwhm', 'oiii_b_fwhm', 'oiii_5007_b_voff', 'redchi', 'monolum']
+                columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'oiii_5007_eqw', 'oiii_5007_lum', 'oiii_5007_n_lum', 'oiii_5007_b_lum', 'oiii_fwhm', 'oiii_n_fwhm', 'oiii_b_fwhm', 'oiii_5007_b_voff', 'redchi', 'monolum', 'fe_ew']
                 
             if emission_line == 'CIV':
                 columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'redchi', 'monolum']
+
+            if pseudo_continuum_fit:
+                columns = ['monolum', 'fe_ew']
 
             index = np.arange(n_samples)
 
@@ -1412,8 +1417,6 @@ def fit_line(wav,
     wav, flux, err = rebin(wav, flux, err, n_rebin)
 
     n_elements = len(wav)
-
-    mono_lum = [] 
 
     # index of the region we want to fit
     if fitting_region.unit == (u.km/u.s):
@@ -1447,7 +1450,8 @@ def fit_line(wav,
                        'redchi':np.nan,
                        'snr':np.nan,
                        'dv':np.nan*(u.km/u.s),
-                       'monolum':np.nan}
+                       'monolum':np.nan,
+                       'fe_ew':np.nan}
             
             if save_dir is not None:
     
@@ -1606,6 +1610,7 @@ def fit_line(wav,
     err_array_red = ma.masked_where(red_mask, err_array)
     vdat_array_red = ma.masked_where(red_mask, vdat_array)
 
+
     #############################################################################################
 
     spec_dv = np.around(np.mean(const.c.to('km/s') * (1.0 - 10.0**-np.diff(np.log10(wav[(wav > fitting_region[0]) & (wav < fitting_region[1])].value)))), decimals=1)
@@ -1641,7 +1646,8 @@ def fit_line(wav,
                        'redchi':np.nan,
                        'snr':np.nan,
                        'dv':np.nan*(u.km/u.s),
-                       'monolum':np.nan}
+                       'monolum':np.nan,
+                       'fe_ew':np.nan}
             
             if save_dir is not None:
         
@@ -1699,12 +1705,10 @@ def fit_line(wav,
         
     ##############################################################################################  
 
-   
     if bkgd_median is True:
 
         xdat_cont = np.array([ma.mean(wav_array_blue, axis=1), ma.mean(wav_array_red, axis=1)]).T
         ydat_cont = np.array([ma.median(flux_array_blue, axis=1), ma.median(flux_array_red, axis=1)]).T
-
 
         if subtract_fe is True:
             print 'Cant fit iron if bkgd_median is True' 
@@ -1761,7 +1765,10 @@ def fit_line(wav,
                 mono_flux = mono_flux * (u.erg / u.cm / u.cm / u.s / u.AA)
                 lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
 
-                mono_lum.append(mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav)  
+                mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav
+
+                eqw_fe = 0.0 
+
                 ######################################################################################################################
     
     if bkgd_median is False:
@@ -1821,6 +1828,18 @@ def fit_line(wav,
             bkgdpars['fe_shift'].min = -20.0
             bkgdpars['fe_shift'].max = 20.0
 
+            # I think that constraining the power-law slope to be negative
+            # helps break some of the degeneracy between the fe template
+            # and the continuum. I don't want to change any of my fits
+            # so for now just do this for the pseudo-continuum fit. 
+
+            # Seems to break if max is set to 0.0
+
+            # if pseudo_continuum_fit:
+
+            #     bkgdpars['exponent'].max = 0.5 
+
+
         if subtract_fe is False:
 
             bkgdmod = Model(PLModel, 
@@ -1829,7 +1848,6 @@ def fit_line(wav,
 
             bkgdpars = bkgdmod.make_params()
             
-
 
         for k, (x, y, er) in enumerate(zip(xdat_cont, ydat_cont, yerr_cont)):
             
@@ -1843,10 +1861,12 @@ def fit_line(wav,
             if subtract_fe is True:
 
                 bkgdpars['fe_sd'].value = fe_pix.value  
-                bkgdpars['exponent'].value = 1.0
+                bkgdpars['exponent'].value = -1.0
                 bkgdpars['amplitude'].value = 1.0
                 bkgdpars['fe_norm'].value = 0.05 
                 bkgdpars['fe_shift'].value = 0.0
+
+                # print bkgdpars['fe_sd'].value * 2.35 * sp_fe.dv 
 
                 out = minimize(resid,
                                bkgdpars,
@@ -1859,6 +1879,46 @@ def fit_line(wav,
 
                 flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] = flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])]).value, model=bkgdmod, sp_fe=sp_fe)
                 flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] = flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])]).value, model=bkgdmod, sp_fe=sp_fe)                  
+
+            
+                ##############################################################################
+                """
+                Calculate EQW of Fe between 4435 and 4684A - same as Shen (2016)
+                """
+                fe_fl = PseudoContinuum(np.arange(4434,4684,1), 
+                                        0.0,
+                                        0.0,
+                                        bkgdpars['fe_norm'].value,
+                                        bkgdpars['fe_sd'].value,
+                                        bkgdpars['fe_shift'].value,
+                                        sp_fe)
+
+                fe_fl = fe_fl / spec_norm 
+                fe_fl = fe_fl * (u.erg / u.cm / u.cm / u.s / u.AA) 
+
+                bg_fl = PseudoContinuum(np.arange(4434,4684,1), 
+                                        bkgdpars['amplitude'].value,
+                                        bkgdpars['exponent'].value,
+                                        0.0,
+                                        bkgdpars['fe_sd'].value,
+                                        bkgdpars['fe_shift'].value,
+                                        sp_fe)      
+
+                bg_fl = bg_fl / spec_norm 
+                bg_fl = bg_fl * (u.erg / u.cm / u.cm / u.s / u.AA) 
+    
+                f = (fe_fl + bg_fl) / bg_fl
+                eqw_fe = (f[:-1] - 1.0) * 1.0
+                eqw_fe = np.nansum(eqw_fe)
+
+                if verbose:
+                    print 'Fe EW: {}'.format(eqw_fe)  
+
+
+
+                ###############################################################################
+
+
 
             if subtract_fe is False:
 
@@ -1877,7 +1937,8 @@ def fit_line(wav,
                 flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] = flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])]).value, model=bkgdmod)
                 flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] = flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])]).value, model=bkgdmod)                  
             
-            
+                eqw_fe = 0.0
+
             ####################################################################################################################
             """
             Calculate flux at wavelength mono_lum_wav
@@ -1903,10 +1964,16 @@ def fit_line(wav,
 
             lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
 
-            mono_lum.append(mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav)  
+            mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav
+
 
             ######################################################################################################################
 
+            if pseudo_continuum_fit:
+    
+                fit_out = {'name':plot_title,
+                           'monolum':np.log10(mono_lum.value),
+                           'fe_ew':eqw_fe} 
         
             if n_samples == 1:  
 
@@ -1914,6 +1981,7 @@ def fit_line(wav,
 
                     print out.message, 'chi-squared = {}'.format(out.redchi)
                     print fit_report(bkgdpars)
+      
                     if subtract_fe is True:
                         print 'Fe FWHM = {0:.1f} km/s (initial = {1:.1f} km/s)'.format(bkgdpars['fe_sd'].value * 2.35 * sp_fe.dv, bkgdpars['fe_sd'].init_value * 2.35 * sp_fe.dv)            
                 
@@ -1971,10 +2039,21 @@ def fit_line(wav,
                         axs[0].plot(xdat_cont_plot, 
                                     bkgdpars['fe_norm'].value * fe_flux, 
                                     color='red')   
+
+                        
+                        amp = bkgdpars['amplitude'].value * 5000.0**(-bkgdpars['exponent'].value)    
                         
                         axs[0].plot(xdat_cont_plot, 
-                                    bkgdpars['amplitude']*xdat_cont_plot**bkgdpars['exponent'], 
+                                    amp*xdat_cont_plot**bkgdpars['exponent'].value, 
                                     color='blue')   
+
+
+                        fe_flux = np.roll(sp_fe.fl, int(bkgdpars['fe_shift'].value))
+                       
+                        axs[1].plot(sp_fe.wa, 
+                                    bkgdpars['fe_norm'].value * fe_flux, 
+                                    color='red')  
+
 
                     if subtract_fe is False: 
 
@@ -1985,6 +2064,16 @@ def fit_line(wav,
                                     color='black', 
                                     lw=2)
                 
+                        axs[1].plot(xdat_plotting, 
+                                    resid(params=bkgdpars, 
+                                          x=xdat_plotting, 
+                                          model=bkgdmod),
+                                    color='black', 
+                                    lw=2)
+ 
+                        bkgdpars_tmp = bkgdpars.copy() 
+
+
                         axs[1].plot(xdat_plotting, 
                                     resid(params=bkgdpars, 
                                           x=xdat_plotting, 
@@ -2129,14 +2218,35 @@ def fit_line(wav,
             
                         global coords
                         coords = [] 
-                        cid = fig.canvas.mpl_connect('button_press_event', onclick2)
+                        cid = fig.canvas.mpl_connect('button_press_event', lambda x: onclick2(x, w0=w0))
             
                         plt.show(1)
             
                     plt.close() 
 
+            else:
 
+                if save_dir is not None:
 
+                    for col in df_out:
+                        df_out.loc[k, col] = fit_out[col] 
+
+    if pseudo_continuum_fit:
+
+        """
+        Only fitting PseudoContinuum
+        """
+
+        if n_samples == 1:       
+
+            return fit_out
+
+        else: 
+       
+            if save_dir is not None:
+                df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+
+            return None 
     
 
     # Rescale x axis so everything is of order unity.
@@ -3059,13 +3169,14 @@ def fit_line(wav,
                    'redchi':out.redchi,
                    'snr':snr[0],
                    'dv':spec_dv, 
-                   'monolum':np.log10(mono_lum[k].value)}
+                   'monolum':np.log10(mono_lum.value),
+                   'fe_ew':eqw_fe}
         
         if n_samples == 1: 
 
             if verbose:
 
-                print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum[k].value)) 
+                print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum.value)) 
             
     
                 print  fit_out['name'] + '\n'\
