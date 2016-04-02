@@ -224,19 +224,36 @@ def rebin(wa, fl, er, n):
     
     return wa, fl, er 
 
-# Simple mouse click function to s tore coordinates
+# Simple mouse click function to store coordinates
 def onclick(event):
 
     global ix
+
+    if event.button == 2:
     
-    ix = event.xdata
-
-    coords.append(ix)
-
-    if len(coords) % 2 == 0:
-        print '[{0:.0f}, {1:.0f}]'.format(coords[-2], coords[-1])  
-        # fig.canvas.mpl_disconnect(cid)
+        ix = event.xdata
+    
+        coords.append(ix)
+    
+        # if len(coords) % 2 == 0:
+        #     print '[{0:.0f}, {1:.0f}]'.format(coords[-2], coords[-1])  
         
+        # fig.canvas.mpl_disconnect(cid)
+    
+    if event.button == 3:
+
+        o = '['
+        for i in range(int(len(coords) / 2)):  
+            if i == int(len(coords) / 2) - 1:
+                o += '[{0:.0f}, {1:.0f}]'.format(coords[2*i], coords[2*i+1])  
+            else:
+                o += '[{0:.0f}, {1:.0f}],'.format(coords[2*i], coords[2*i+1])  
+        o += ']*(u.km/u.s)'
+        print o 
+
+
+
+
     return None 
 
 def onclick2(event, w0=4862.721*u.AA):
@@ -286,6 +303,7 @@ def resid(params=None,
 
         if sigma is not None:
             weighted = np.sqrt(resids ** 2 / sigma ** 2) 
+
             return weighted
         else:
             return resids
@@ -821,6 +839,58 @@ def plot_fit(wav=None,
                  c='black',
                  linestyle='--',
                  lw=2)     
+
+    if fit_model == 'siiv': 
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['g0_center'].value
+        p['sigma'].value = pars['g0_sigma'].value
+        p['amplitude'].value = pars['g0_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='red',
+                 linestyle='-')
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['g1_center'].value
+        p['sigma'].value = pars['g1_sigma'].value
+        p['amplitude'].value = pars['g1_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='red',
+                 linestyle='-')
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['g2_center'].value
+        p['sigma'].value = pars['g2_sigma'].value
+        p['amplitude'].value = pars['g2_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='orange',
+                 linestyle='-')
+
+        g = GaussianModel()
+        p = g.make_params()
+
+        p['center'].value = pars['g3_center'].value
+        p['sigma'].value = pars['g3_sigma'].value
+        p['amplitude'].value = pars['g3_amplitude'].value
+
+        fit.plot(np.sort(vdat.value), 
+                 g.eval(p, x=np.sort(vdat.value)),
+                 c='orange',
+                 linestyle='-')
+
+
 
     if fit_model == 'GaussHermite':
 
@@ -1436,6 +1506,7 @@ def fit_line(wav,
                        'cen':np.nan,
                        'eqw':np.nan,
                        'broad_lum':np.nan,
+                       'peak':np.nan,
                        'narrow_fwhm':np.nan,
                        'narrow_lum':np.nan,
                        'narrow_voff':np.nan,
@@ -1632,6 +1703,7 @@ def fit_line(wav,
                        'cen':np.nan,
                        'eqw':np.nan,
                        'broad_lum':np.nan,
+                       'peak':np.nan,
                        'narrow_fwhm':np.nan,
                        'narrow_lum':np.nan,
                        'narrow_voff':np.nan,
@@ -2599,6 +2671,47 @@ def fit_line(wav,
 
         pars['oiii_4959_b_amplitude'].set(expr='oiii_4959_b_sigma*((oiii_5007_b_amplitude/oiii_5007_b_sigma)-oiii_4959_b_amp_delta)/3')  
 
+
+    elif fit_model == 'siiv':
+
+        xscale = 1.0 
+
+        mod = GaussianModel(prefix='g0_') + GaussianModel(prefix='g1_') + GaussianModel(prefix='g2_') + GaussianModel(prefix='g3_') 
+        
+        pars = mod.make_params() 
+
+        pars['g0_amplitude'].value = 1.0
+        pars['g1_amplitude'].value = 1.0
+        pars['g2_amplitude'].value = 1.0
+        pars['g3_amplitude'].value = 1.0
+
+        pars['g0_amplitude'].min = 0.0
+        pars['g1_amplitude'].min = 0.0
+        
+        pars['g2_amplitude'].set(expr='g0_amplitude')
+        pars['g3_amplitude'].set(expr='g1_amplitude')
+
+        pars['g0_sigma'].value = 1.0
+        pars['g1_sigma'].value = 1.0
+        pars['g2_sigma'].value = 1.0
+        pars['g3_sigma'].value = 1.0
+
+        pars['g0_sigma'].min = 1000.0
+        pars['g1_sigma'].min = 1000.0
+
+        pars['g2_sigma'].set(expr='g0_sigma')
+        pars['g3_sigma'].set(expr='g1_sigma')
+
+        pars['g0_center'].value = 0.0
+        pars['g1_center'].value = 0.0
+        pars['g2_center'].value = 0.0
+        pars['g3_center'].value = 0.0
+
+        pars['g1_center'].set(expr='g0_center')        
+        pars['g2_center'].set(expr = 'g0_center+{}'.format(wave2doppler(1402*u.AA, w0).value - wave2doppler(1397*u.AA, w0).value))
+        pars['g3_center'].set(expr='g2_center')
+
+
     if (n_samples > 1) & (plot is True):
 
         fig = plt.figure(figsize=(6,10))
@@ -2717,6 +2830,17 @@ def fit_line(wav,
             pars['oiii_4959_b_center_delta'].value = 500.0 
             pars['oiii_5007_b_amp_delta'].value = 0.1
             pars['oiii_4959_b_amp_delta'].value = 0.1 
+
+        
+        elif fit_model == 'siiv':
+
+            pars['g0_amplitude'].value = 1.0
+            pars['g1_amplitude'].value = 1.0
+            
+            pars['g0_sigma'].value = 1.0
+            pars['g1_sigma'].value = 1.0
+            
+            pars['g0_center'].value = 0.0
 
         out = minimize(resid,
                        pars,
@@ -2888,6 +3012,9 @@ def fit_line(wav,
         pdf = integrand(xs) / norm
         cdf = np.cumsum(pdf)
         cdf_r = np.cumsum(pdf[::-1])[::-1] # reverse cumsum
+
+        # max of line
+        peak_flux = np.max(integrand(xs)) / spec_norm
     
         func_center = xs[np.argmax(pdf)] 
        
@@ -3155,6 +3282,7 @@ def fit_line(wav,
                    'cen': func_center*xscale,
                    'eqw': eqw,
                    'broad_lum':np.log10(broad_lum.value),
+                   'peak':peak_flux, 
                    'narrow_fwhm':narrow_fwhm,
                    'narrow_lum':np.log10(narrow_lum.value) if ~np.isnan(narrow_lum.value) else np.nan,
                    'narrow_voff':narrow_voff, 
@@ -3186,6 +3314,7 @@ def fit_line(wav,
                       'Broad centroid: {0:.2f} km/s \n'.format(fit_out['cen']), \
                       'Broad EQW: {0:.2f} A \n'.format(fit_out['eqw']), \
                       'Broad luminosity {0:.2f} erg/s \n'.format(fit_out['broad_lum']), \
+                      'Broad peak {0:.2e} erg/s \n'.format(fit_out['peak']), \
                       'Narrow FWHM: {0:.2f} km/s \n'.format(fit_out['narrow_fwhm']), \
                       'Narrow luminosity: {0:.2f} km/s \n'.format(fit_out['narrow_lum']), \
                       'Narrow velocity: {0:.2f} km/s \n'.format(fit_out['narrow_voff']), \
@@ -3268,6 +3397,7 @@ def fit_line(wav,
                     format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
                     format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
                     format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+                    format(fit_out['peak'], '.2f') + ',' if ~np.isnan(fit_out['peak']) else ',',\
                     format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
 
         
