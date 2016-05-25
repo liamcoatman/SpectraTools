@@ -54,9 +54,9 @@ def gausshermite_component(x, amp, sig, cen, order):
     if order == 6:    
         return (x*x*(x*x*(8.0*x*x-60.0) + 90.0) - 15.0) / (12.0*np.sqrt(5.0)) * (amp/(np.sqrt(2*math.pi)*sig)) * np.exp(-(x-cen)**2 /(2*sig**2))
 
-def gausshermite_0(x, amp0, sig0, cen0, order):
+def gausshermite_0(x, amp0, sig0, cen0):
 
-    h0 = gausshermite_component(x, amp0, sig0, cen0)
+    h0 = gausshermite_component(x, amp0, sig0, cen0, 0)
 
     return h0 
 
@@ -922,7 +922,7 @@ def plot_fit(wav=None,
             lw=2)
     
     
-    # Set labels 
+    # Set labels
     fit.set_ylabel(r'F$_\lambda$', fontsize=12)
     eb.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=10)
     eb.set_ylabel(r'F$_\lambda$', fontsize=12)
@@ -939,13 +939,19 @@ def plot_fit(wav=None,
     ydat = flux[fitting]
     yerr = err[fitting]
     hg = fig.add_subplot(5,1,4)
+
+    bad = np.isnan(ydat) | np.isinf(yerr)
+    ydat = ydat[~bad]
+    vdat = vdat[~bad]
+    yerr = yerr[~bad]
+  
     hg.hist((ydat - resid(pars, vdat.value/xscale, mod)) / yerr, 
             bins=np.arange(-5,5,0.25), 
             normed=True, 
             edgecolor='None', 
             facecolor='lightgrey')
     x_axis = np.arange(-5, 5, 0.001)
-    hg.plot(x_axis, norm.pdf(x_axis,0,1), color='black', lw=2)
+    hg.plot(x_axis, norm.pdf(x_axis, 0, 1), color='black', lw=2)
 
 
     #########################################
@@ -1475,18 +1481,24 @@ def fit_line(wav,
 
     # Transform to quasar rest-frame
     wav =  wav / (1.0 + z)
-    wav = wav*u.AA
-    dw = dw / (1.0 + z)
+    wav = wav*u.AA 
+    dw = dw / (1.0 + z) # don't actually use this but if I did be careful if spectrum is rebinned
 
     # Normalise spectrum
-    spec_norm = 1.0 / np.median(flux)
+
+    spec_norm = 1.0 / np.median(flux[(flux != 0.0) & ~np.isnan(flux)])
     flux = flux * spec_norm 
     err = err * spec_norm 
 
     # Rebin spectrum 
+    wav_norebin = wav * 1.0
+    flux_norebin = flux * 1.0
+    err_norebin = err * 1.0 
+
     wav, flux, err = rebin(wav, flux, err, n_rebin)
 
     n_elements = len(wav)
+    n_elements_norebin = len(wav_norebin)
 
     # index of the region we want to fit
     if fitting_region.unit == (u.km/u.s):
@@ -1501,6 +1513,9 @@ def fit_line(wav,
        
             fit_out = {'name':plot_title, 
                        'fwhm':np.nan,
+                       'fwhm_1':np.nan,
+                       'fwhm_2':np.nan,
+                       'fwhm_3':np.nan,
                        'sigma':np.nan,
                        'median':np.nan,
                        'cen':np.nan,
@@ -1565,13 +1580,24 @@ def fit_line(wav,
                                                  size=(n_samples, n_elements)),
                                 dtype=np.float32)
 
+        flux_array_norebin = np.asarray(np.random.normal(flux_norebin,
+                                                         err_norebin,
+                                                         size=(n_samples, n_elements_norebin)),
+                                dtype=np.float32)
+
+
     else: 
 
         flux_array = flux.reshape(1, n_elements) 
+        flux_array_norebin = flux_norebin.reshape(1, n_elements_norebin) 
     
     wav_array = np.repeat(wav.reshape(1, n_elements), n_samples, axis=0) 
     err_array = np.repeat(err.reshape(1, n_elements), n_samples, axis=0) 
     vdat_array = wave2doppler(wav_array, w0)
+
+    wav_array_norebin = np.repeat(wav_norebin.reshape(1, n_elements_norebin), n_samples, axis=0) 
+    err_array_norebin = np.repeat(err_norebin.reshape(1, n_elements_norebin), n_samples, axis=0) 
+    vdat_array_norebin = wave2doppler(wav_array_norebin, w0)
 
     # don't do any of the outlier masking etc. to this array. 
 
@@ -1587,13 +1613,20 @@ def fit_line(wav,
     
     # get rid of nans / infs / negative errors 
 
+
     mask = (np.isnan(flux_array)) | (err_array < 0.0) 
+    mask_norebin = (np.isnan(flux_array_norebin)) | (err_array_norebin < 0.0) 
 
     flux_array = ma.masked_where(mask, flux_array)
     wav_array = ma.masked_where(mask, wav_array)
     err_array = ma.masked_where(mask, err_array)
     vdat_array = ma.masked_where(mask, vdat_array)      
-    
+
+    flux_array_norebin = ma.masked_where(mask_norebin, flux_array_norebin)
+    wav_array_norebin = ma.masked_where(mask_norebin, wav_array_norebin)
+    err_array_norebin = ma.masked_where(mask_norebin, err_array_norebin)
+    vdat_array_norebin = ma.masked_where(mask_norebin, vdat_array_norebin)      
+
     if reject_outliers:
                
         flux_array_smooth = medfilt2d(flux_array, kernel_size=(1, reject_width))  
@@ -1623,6 +1656,35 @@ def fit_line(wav,
         err_array = ma.masked_where(mask, err_array)
         vdat_array = ma.masked_where(mask, vdat_array)
 
+        
+        #------------------------------------------------------------------------
+
+        flux_array_smooth_norebin = medfilt2d(flux_array_norebin, kernel_size=(1, reject_width))  
+        
+        mask_norebin = (flux_array_smooth_norebin - flux_array_norebin) / err_array_norebin > reject_sigma 
+    
+        xy_norebin = np.argwhere(mask_norebin)
+    
+        bad_pix_norebin = np.concatenate(([(i[0], i[1] - 2) for i in xy_norebin],
+                                          [(i[0], i[1] - 1) for i in xy_norebin],
+                                          [(i[0], i[1]) for i in xy_norebin],
+                                          [(i[0], i[1] + 1) for i in xy_norebin],
+                                          [(i[0], i[1] + 2) for i in xy_norebin]))
+
+   
+        # if we go over the edge then remove these 
+        bad_pix_norebin = bad_pix_norebin[(bad_pix_norebin[:,1] > 0) & (bad_pix_norebin[:,1] < wav_array_norebin.shape[1] - 1)]
+        
+        bad_pix_norebin = zip(*bad_pix_norebin)
+    
+        mask_norebin = np.zeros(flux_array_norebin.shape, dtype=bool)
+        
+        mask_norebin[bad_pix_norebin] = True 
+    
+        flux_array_norebin = ma.masked_where(mask_norebin, flux_array_norebin)
+        wav_array_norebin = ma.masked_where(mask_norebin, wav_array_norebin)
+        err_array_norebin = ma.masked_where(mask_norebin, err_array_norebin)
+        vdat_array_norebin = ma.masked_where(mask_norebin, vdat_array_norebin)
 
     if maskout is not None:
 
@@ -1635,6 +1697,15 @@ def fit_line(wav,
             err_array = ma.masked_where(mask, err_array)
             vdat_array = ma.masked_where(mask, vdat_array)   
 
+        for item in maskout:
+                             
+            mask_norebin = (ma.getdata(vdat_array_norebin).value > item[0].value) & (ma.getdata(vdat_array_norebin).value < item[1].value) 
+    
+            flux_array_norebin = ma.masked_where(mask_norebin, flux_array_norebin)
+            wav_array_norebin = ma.masked_where(mask_norebin, wav_array_norebin)
+            err_array_norebin = ma.masked_where(mask_norebin, err_array_norebin)
+            vdat_array_norebin = ma.masked_where(mask_norebin, vdat_array_norebin)   
+
     if mask_negflux:
 
         mask = flux_array < 0.0  
@@ -1643,6 +1714,13 @@ def fit_line(wav,
         wav_array = ma.masked_where(mask, wav_array)
         err_array = ma.masked_where(mask, err_array)
         vdat_array = ma.masked_where(mask, vdat_array)      
+
+        mask_norebin = flux_array_norebin < 0.0  
+
+        flux_array_norebin = ma.masked_where(mask_norebin, flux_array_norebin)
+        wav_array_norebin = ma.masked_where(mask_norebin, wav_array_norebin)
+        err_array_norebin = ma.masked_where(mask_norebin, err_array_norebin)
+        vdat_array_norebin = ma.masked_where(mask_norebin, vdat_array_norebin)      
 
     # index of region for continuum fit 
     if continuum_region[0].unit == (u.km/u.s):
@@ -1667,6 +1745,7 @@ def fit_line(wav,
     wav_array_fit = ma.masked_where(mask, wav_array)
     err_array_fit = ma.masked_where(mask, err_array)
     vdat_array_fit = ma.masked_where(mask, vdat_array)
+
     
     blue_mask = (ma.getdata(wav_array).value < continuum_region[0][0].value) | (ma.getdata(wav_array).value > continuum_region[0][1].value)
     red_mask = (ma.getdata(wav_array).value < continuum_region[1][0].value) | (ma.getdata(wav_array).value > continuum_region[1][1].value)   
@@ -1681,10 +1760,26 @@ def fit_line(wav,
     err_array_red = ma.masked_where(red_mask, err_array)
     vdat_array_red = ma.masked_where(red_mask, vdat_array)
 
+    #------------------------------------------------------------------------------------------------------------------------------
+
+    blue_mask_norebin = (ma.getdata(wav_array_norebin).value < continuum_region[0][0].value) | (ma.getdata(wav_array_norebin).value > continuum_region[0][1].value)
+    red_mask_norebin = (ma.getdata(wav_array_norebin).value < continuum_region[1][0].value) | (ma.getdata(wav_array_norebin).value > continuum_region[1][1].value)   
+
+    flux_array_blue_norebin = ma.masked_where(blue_mask_norebin, flux_array_norebin)
+    wav_array_blue_norebin = ma.masked_where(blue_mask_norebin, wav_array_norebin)
+    err_array_blue_norebin = ma.masked_where(blue_mask_norebin, err_array_norebin)
+    vdat_array_blue_norebin = ma.masked_where(blue_mask_norebin, vdat_array_norebin)
+
+    flux_array_red_norebin = ma.masked_where(red_mask_norebin, flux_array_norebin)
+    wav_array_red_norebin = ma.masked_where(red_mask_norebin, wav_array_norebin)
+    err_array_red_norebin = ma.masked_where(red_mask_norebin, err_array_norebin)
+    vdat_array_red_norebin = ma.masked_where(red_mask_norebin, vdat_array_norebin)
+
 
     #############################################################################################
 
     spec_dv = np.around(np.mean(const.c.to('km/s') * (1.0 - 10.0**-np.diff(np.log10(wav[(wav > fitting_region[0]) & (wav < fitting_region[1])].value)))), decimals=1)
+    spec_dv_norebin = np.around(np.mean(const.c.to('km/s') * (1.0 - 10.0**-np.diff(np.log10(wav_norebin[(wav_norebin > fitting_region[0]) & (wav_norebin < fitting_region[1])].value)))), decimals=1)
 
     #############################################################################################
 
@@ -1698,6 +1793,9 @@ def fit_line(wav,
         
             fit_out = {'name':plot_title, 
                        'fwhm':np.nan,
+                       'fwhm_1':np.nan,
+                       'fwhm_2':np.nan,
+                       'fwhm_3':np.nan,                       
                        'sigma':np.nan,
                        'median':np.nan,
                        'cen':np.nan,
@@ -1753,13 +1851,13 @@ def fit_line(wav,
             return None 
 
     """
-    Calculate S/N ratio per resolution element in continuum
-    This is only correct for the LIRIS spectra 
+    Calculate S/N ratio per pixel 
+    Do this for the un-rebinned spectra  
     """
    
-    wa = ma.concatenate((wav_array_blue, wav_array_red), axis=1)
-    fl = ma.concatenate((flux_array_blue, flux_array_red), axis=1)
-    er = ma.concatenate((err_array_blue, err_array_red), axis=1)
+    wa = ma.concatenate((wav_array_blue_norebin, wav_array_red_norebin), axis=1)
+    fl = ma.concatenate((flux_array_blue_norebin, flux_array_red_norebin), axis=1)
+    er = ma.concatenate((err_array_blue_norebin, err_array_red_norebin), axis=1)
 
     mask = (er < 0.0) | np.isnan(fl)
     
@@ -1769,7 +1867,7 @@ def fit_line(wav,
     
     snr = ma.median(fl / er, axis=1)
 
-    # 33.02 is the A per resolution element I measured from the Arc spectrum
+    # 33.02 is the A per resolution element I measured from the Arc spectrum for Liris 
     if verbose:
         if n_samples == 1:
         # print 'S/N per resolution element in continuum: {0:.2f}'.format(np.median( np.sqrt(33.02 / np.diff(wa) ) * fl[:-1] / er[:-1] )) 
@@ -1993,6 +2091,7 @@ def fit_line(wav,
 
 
             if subtract_fe is False:
+
 
                 bkgdpars['exponent'].value = 1.0
                 bkgdpars['amplitude'].value = 1.0 
@@ -2296,13 +2395,6 @@ def fit_line(wav,
             
                     plt.close() 
 
-            else:
-
-                if save_dir is not None:
-
-                    for col in df_out:
-                        df_out.loc[k, col] = fit_out[col] 
-
     if pseudo_continuum_fit:
 
         """
@@ -2345,11 +2437,11 @@ def fit_line(wav,
                
         for i in range(nGaussians):
             pars['g{}_center'.format(i)].value = 0.0
-            pars['g{}_center'.format(i)].min = -5000.0
-            pars['g{}_center'.format(i)].max = 5000.0
+            pars['g{}_center'.format(i)].min = -2000.0
+            pars['g{}_center'.format(i)].max = 2000.0
             pars['g{}_amplitude'.format(i)].min = 0.0
-            pars['g{}_sigma'.format(i)].min = 1000.0 # sometimes might be better if this is relaxed 
-            pars['g{}_sigma'.format(i)].max = 10000.0 
+            # pars['g{}_sigma'.format(i)].min = 1000.0 # sometimes might be better if this is relaxed 
+            # pars['g{}_sigma'.format(i)].max = 10000.0 
 
         # pars['g0_center'].set(expr='g1_center') 
 
@@ -2496,7 +2588,7 @@ def fit_line(wav,
 
         else:
 
-            pars['ha_n_sigma'].max = 900.0 / 2.35 
+            pars['ha_n_sigma'].max = 1200.0 / 2.35 
             pars['ha_n_sigma'].min = 400.0 / 2.35 
             pars['nii_6548_n_sigma'].set(expr='ha_n_sigma')
             pars['nii_6584_n_sigma'].set(expr='ha_n_sigma')
@@ -3068,6 +3160,21 @@ def fit_line(wav,
             # I know that the Gaussians are normalised, so the area is just the amplitude, so surely
             # I shouldn't have to do this function evaluation. 
     
+
+            # this bit won't work unless nGaussians = 2 
+            broad_fwhm = np.zeros(nGaussians)
+
+            for i in range(nGaussians):   
+                broad_fwhm[i] = np.array(pars['ha_b_{}_fwhm'.format(i)].value)
+
+            broad_fwhm = np.sort(broad_fwhm)[::-1]
+
+            if len(broad_fwhm) == 1:
+                broad_fwhm = np.append(broad_fwhm, np.nan)
+
+            if len(broad_fwhm) == 2: 
+                broad_fwhm = np.append(broad_fwhm, np.nan)
+
             narrow_mod = GaussianModel()
             narrow_pars = narrow_mod.make_params()
             narrow_pars['amplitude'].value = pars['ha_n_amplitude'].value
@@ -3123,6 +3230,20 @@ def fit_line(wav,
     
     
         elif fit_model == 'Hb':    
+
+            # this bit won't work unless nGaussians = 2 
+            broad_fwhm = np.zeros(nGaussians)
+
+            for i in range(nGaussians):   
+                broad_fwhm[i] = np.array(pars['hb_b_{}_fwhm'.format(i)].value)
+
+            broad_fwhm = np.sort(broad_fwhm)[::-1]
+
+            if len(broad_fwhm) == 1:
+                broad_fwhm = np.append(broad_fwhm, np.nan)
+
+            if len(broad_fwhm) == 2:
+                broad_fwhm = np.append(broad_fwhm, np.nan)
      
             oiii_5007_b_mod = GaussianModel()
             oiii_5007_b_pars = oiii_5007_b_mod.make_params() 
@@ -3261,7 +3382,7 @@ def fit_line(wav,
     
                 narrow_lum = np.nan * (u.erg / u.s)          
     
-        else: 
+        elif fit_model == 'GaussHermite':
           
             narrow_lum = np.nan * (u.erg / u.s)
             narrow_fwhm = np.nan 
@@ -3273,10 +3394,46 @@ def fit_line(wav,
             oiii_5007_fwhm = np.nan 
             oiii_5007_n_fwhm = np.nan 
             oiii_5007_b_fwhm = np.nan 
-            oiii_5007_b_voff = np.nan 
+            oiii_5007_b_voff = np.nan
+
+            broad_fwhm = np.repeat(np.nan, 3)
+
+        elif fit_model == 'MultiGauss':
+
+            broad_fwhm = np.zeros(nGaussians)
+
+            for i in range(nGaussians):   
+                broad_fwhm[i] = np.array(pars['g{}_fwhm'.format(i)].value)
+
+            broad_fwhm = np.sort(broad_fwhm)[::-1]
+
+            if len(broad_fwhm) == 1:
+                broad_fwhm = np.append(broad_fwhm, np.nan)
+
+            if len(broad_fwhm) == 2:
+                broad_fwhm = np.append(broad_fwhm, np.nan)
+
+            narrow_lum = np.nan * (u.erg / u.s)
+            narrow_fwhm = np.nan 
+            narrow_voff = np.nan 
+            oiii_5007_eqw = np.nan 
+            oiii_5007_lum = np.nan * (u.erg / u.s)
+            oiii_5007_n_lum = np.nan * (u.erg / u.s)
+            oiii_5007_b_lum = np.nan * (u.erg / u.s)
+            oiii_5007_fwhm = np.nan 
+            oiii_5007_n_fwhm = np.nan 
+            oiii_5007_b_fwhm = np.nan 
+            oiii_5007_b_voff = np.nan
+
+
+
+
 
         fit_out = {'name':plot_title, 
                    'fwhm':(root2 - root1)*xscale,
+                   'fwhm_1':broad_fwhm[0],
+                   'fwhm_2':broad_fwhm[1],
+                   'fwhm_3':broad_fwhm[2],
                    'sigma': sd*xscale,
                    'median': md*xscale,
                    'cen': func_center*xscale,
@@ -3309,6 +3466,8 @@ def fit_line(wav,
     
                 print  fit_out['name'] + '\n'\
                       'Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm']), \
+                      'Narrow Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_1']), \
+                      'Very Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_2']), \
                       'Broad sigma: {0:.2f} km/s \n'.format(fit_out['sigma']), \
                       'Broad median: {0:.2f} km/s \n'.format(fit_out['median']), \
                       'Broad centroid: {0:.2f} km/s \n'.format(fit_out['cen']), \
@@ -3335,6 +3494,9 @@ def fit_line(wav,
 
                     print fit_out['name'] + ',',\
                     format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+                    format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
+                    format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
+                    format(fit_out['fwhm_3'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_3']) else ',',\
                     format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
                     format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
                     format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
@@ -3378,6 +3540,9 @@ def fit_line(wav,
 
                     print fit_out['name'] + ',',\
                     format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+                    format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
+                    format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
+                    format(fit_out['fwhm_3'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_3']) else ',',\
                     format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
                     format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
                     format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
@@ -3397,7 +3562,7 @@ def fit_line(wav,
                     format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
                     format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
                     format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
-                    format(fit_out['peak'], '.2f') + ',' if ~np.isnan(fit_out['peak']) else ',',\
+                    format(fit_out['peak'], '.2e') + ',' if ~np.isnan(fit_out['peak']) else ',',\
                     format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
 
         
