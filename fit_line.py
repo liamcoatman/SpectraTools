@@ -1580,8 +1580,13 @@ def fit_line(wav,
                                                  size=(n_samples, n_elements)),
                                 dtype=np.float32)
 
+        # Can't draw from normal distribution with sigma = 0.0
+        # These pixels should be masked in the fit so won't matter. 
+        err_norebin_tmp = err_norebin * 1.0
+        err_norebin_tmp[err_norebin_tmp <= 0.0] = 1e3 
+
         flux_array_norebin = np.asarray(np.random.normal(flux_norebin,
-                                                         err_norebin,
+                                                         err_norebin_tmp,
                                                          size=(n_samples, n_elements_norebin)),
                                 dtype=np.float32)
 
@@ -1894,7 +1899,7 @@ def fit_line(wav,
             for k, (x, y) in enumerate(zip(xdat_cont, ydat_cont)):
 
                 if n_samples > 1: 
-                    print k 
+                    print plot_title, k 
 
                 bkgdpars['exponent'].value = 1.0
                 bkgdpars['amplitude'].value = 1.0 
@@ -2022,7 +2027,7 @@ def fit_line(wav,
         for k, (x, y, er) in enumerate(zip(xdat_cont, ydat_cont, yerr_cont)):
             
             if n_samples > 1: 
-                print k 
+                print plot_title, k 
 
             if len(ma.getdata(x[~ma.getmaskarray(x)]).value) == 0: 
                 if verbose:
@@ -2434,11 +2439,13 @@ def fit_line(wav,
             gmod = GaussianModel(prefix='g{}_'.format(i))
             mod += gmod
             pars += gmod.guess(flux_array_fit[0,~ma.getmaskarray(flux_array_fit[0,:])], x=ma.getdata(vdat_array_fit[0,~ma.getmaskarray(vdat_array_fit[0,:])]).value)
+
+
                
         for i in range(nGaussians):
             pars['g{}_center'.format(i)].value = 0.0
             pars['g{}_center'.format(i)].min = -2000.0
-            pars['g{}_center'.format(i)].max = 2000.0
+            pars['g{}_center'.format(i)].max = 2000.0 
             pars['g{}_amplitude'.format(i)].min = 0.0
             # pars['g{}_sigma'.format(i)].min = 1000.0 # sometimes might be better if this is relaxed 
             # pars['g{}_sigma'.format(i)].max = 10000.0 
@@ -2843,7 +2850,7 @@ def fit_line(wav,
     for k, (x, y, er) in enumerate(zip(vdat_array_fit, flux_array_fit, err_array_fit)):
 
         if n_samples > 1:
-            print k 
+            print plot_title, k 
 
         if fit_model == 'MultiGauss':
 
