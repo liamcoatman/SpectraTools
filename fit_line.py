@@ -9,10 +9,11 @@ Fit emission line with model.
 """
 from __future__ import division
 
+from termcolor import colored
 import numpy as np
 import astropy.units as u
 from lmfit.models import GaussianModel, LorentzianModel, PowerLawModel, ConstantModel
-from lmfit import minimize, Parameters, fit_report, Model
+from lmfit import minimize, Parameters, fit_report, Model, Minimizer
 import numpy.ma as ma
 import matplotlib.pyplot as plt
 from scipy import integrate, optimize
@@ -31,7 +32,9 @@ from barak import spec
 from astropy import constants as const
 import mpld3
 from scipy.signal import medfilt2d, medfilt
-import pandas as pd 
+from functools import partial 
+import pandas as pd
+from multiprocessing import Pool 
 import warnings
 warnings.simplefilter(action = "ignore", category = FutureWarning) # I get "elementwise comparison failed" during plotting, but doesn't seem important
 # warnings.simplefilter(action = "error", category = RuntimeWarning)
@@ -727,9 +730,9 @@ def plot_fit(wav=None,
             g = GaussianModel()
             p = g.make_params()
     
-            p['center'] = pars['hb_n_center']
-            p['sigma'] = pars['hb_n_sigma']
-            p['amplitude'] = pars['hb_n_amplitude']   
+            p['center'].value = pars['hb_n_center'].value
+            p['sigma'].value = pars['hb_n_sigma'].value
+            p['amplitude'].value = pars['hb_n_amplitude'].value
     
             fit.plot(np.sort(vdat.value), 
                      g.eval(p, x=np.sort(vdat.value)),
@@ -1262,14 +1265,14 @@ def plot_fit_d3(wav=None,
             g = GaussianModel()
             p = g.make_params()
     
-            p['center'] = pars['hb_n_center']
-            p['sigma'] = pars['hb_n_sigma']
-            p['amplitude'] = pars['hb_n_amplitude']   
+            p['center'].value = pars['hb_n_center'].value
+            p['sigma'].value = pars['hb_n_sigma'].value
+            p['amplitude'].value = pars['hb_n_amplitude'].value
     
             ax.plot(np.sort(vdat.value), 
                      g.eval(p, x=np.sort(vdat.value)),
                      c='orange',
-                     linestyle='--')                    
+                     linestyle='--')                
 
     if fit_model == 'Ha': 
 
@@ -1400,6 +1403,1993 @@ def plot_fit_d3(wav=None,
 
     return None
 
+def plot_continum(xdat_cont, 
+                  ydat_cont, 
+                  yerr_cont, 
+                  wav, 
+                  flux, 
+                  err, 
+                  subtract_fe, 
+                  bkgdpars, 
+                  bkgdmod, 
+                  sp_fe, 
+                  continuum_region, 
+                  maskout, 
+                  w0, 
+                  reject_outliers, 
+                  wav_array_blue, 
+                  flux_array_blue, 
+                  wav_array_red, 
+                  flux_array_red, 
+                  verbose):
+
+  
+    """
+    Plotting continuum / iron fit
+    """
+
+    xdat_cont_plot = ma.getdata(xdat_cont[~ma.getmaskarray(xdat_cont)]).value
+    ydat_cont_plot = ma.getdata(ydat_cont[~ma.getmaskarray(ydat_cont)])
+    yerr_cont_plot = ma.getdata(yerr_cont[~ma.getmaskarray(yerr_cont)])
+
+    fig, axs = plt.subplots(4, 1, figsize=(20,20))
+
+    axs[0].errorbar(wav.value, 
+                    flux, 
+                    yerr=err, 
+                    linestyle='', 
+                    alpha=0.5,
+                    color='grey')
+
+    axs[1].errorbar(wav.value, 
+                    median_filter(flux, 51), 
+                    color='grey')
+
+    xdat_plotting = np.arange(xdat_cont_plot.min(), xdat_cont_plot.max(), 1)
+
+    if subtract_fe is True: 
+
+        axs[0].plot(xdat_plotting, 
+                    resid(params=bkgdpars, 
+                          x=xdat_plotting, 
+                          model=bkgdmod, 
+                          sp_fe=sp_fe), 
+                    color='black', 
+                    lw=2)
+
+        axs[1].plot(xdat_plotting, 
+                    resid(params=bkgdpars, 
+                          x=xdat_plotting, 
+                          model=bkgdmod, 
+                          sp_fe=sp_fe), 
+                    color='black', 
+                    lw=2)
+
+        gauss = Gaussian1DKernel(stddev=bkgdpars['fe_sd'].value) 
+
+        fe_flux = convolve(sp_fe.fl, gauss)
+        fe_flux = np.roll(fe_flux, int(bkgdpars['fe_shift'].value))
+        f = interp1d(sp_fe.wa, fe_flux) 
+        fe_flux = f(xdat_cont_plot)   
+
+        axs[0].plot(xdat_cont_plot, 
+                    bkgdpars['fe_norm'].value * fe_flux, 
+                    color='red')   
+
+        
+        amp = bkgdpars['amplitude'].value * 5000.0**(-bkgdpars['exponent'].value)    
+        
+        axs[0].plot(xdat_cont_plot, 
+                    amp*xdat_cont_plot**bkgdpars['exponent'].value, 
+                    color='blue')   
+
+
+        fe_flux = np.roll(sp_fe.fl, int(bkgdpars['fe_shift'].value))
+       
+        axs[1].plot(sp_fe.wa, 
+                    bkgdpars['fe_norm'].value * fe_flux, 
+                    color='red')  
+
+
+    if subtract_fe is False: 
+
+        axs[0].plot(xdat_plotting, 
+                    resid(params=bkgdpars, 
+                          x=xdat_plotting, 
+                          model=bkgdmod), 
+                    color='black', 
+                    lw=2)
+
+        axs[1].plot(xdat_plotting, 
+                    resid(params=bkgdpars, 
+                          x=xdat_plotting, 
+                          model=bkgdmod),
+                    color='black', 
+                    lw=2)
+
+        bkgdpars_tmp = bkgdpars.copy() 
+
+
+        axs[1].plot(xdat_plotting, 
+                    resid(params=bkgdpars, 
+                          x=xdat_plotting, 
+                          model=bkgdmod),
+                    color='black', 
+                    lw=2)
+    
+
+
+    axs[0].set_xlim(xdat_cont_plot.min() - 50.0, xdat_cont_plot.max() + 50.0)
+    axs[1].set_xlim(axs[0].get_xlim())
+
+    if subtract_fe is True: 
+    
+        func_vals = resid(params=bkgdpars, 
+                          x=xdat_cont_plot, 
+                          model=bkgdmod, 
+                          sp_fe=sp_fe)
+
+    if subtract_fe is False: 
+
+        func_vals = resid(params=bkgdpars, 
+                          x=xdat_cont_plot, 
+                          model=bkgdmod)
+
+    axs[0].set_ylim(np.median(ydat_cont_plot) - 3.0*np.std(ydat_cont_plot), np.median(ydat_cont_plot) + 3.0*np.std(ydat_cont_plot))
+    axs[1].set_ylim(axs[0].get_ylim())
+    
+    xdat_masking = np.arange(wav.min().value, wav.max().value, 0.05)*(u.AA)
+    vdat_masking = wave2doppler(xdat_masking, w0)
+    
+    mask = (xdat_masking.value < continuum_region[0][0].value) | \
+           ((xdat_masking.value > continuum_region[0][1].value) &  (xdat_masking.value < continuum_region[1][0].value))  | \
+           (xdat_masking.value > continuum_region[1][1].value)
+    
+    if maskout is not None:
+        for item in maskout:
+            mask = mask | ((vdat_masking.value > item.value[0]) & (vdat_masking.value < item.value[1]))
+    
+    vdat1_masking = ma.array(vdat_masking.value)
+    vdat1_masking[mask] = ma.masked 
+
+    for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
+    
+        axs[0].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                       doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                       alpha=0.4, 
+                       color='powderblue')    
+  
+        axs[1].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                       doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                       alpha=0.4, 
+                       color='powderblue')    
+   
+        axs[2].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                       doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                       alpha=0.4, 
+                       color='powderblue')    
+    
+        axs[3].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+                       doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+                       alpha=0.4, 
+                       color='powderblue')    
+
+    if subtract_fe is True: 
+    
+        axs[2].scatter(xdat_cont_plot, 
+                      (ydat_cont_plot - resid(params=bkgdpars, 
+                                              x=xdat_cont_plot, 
+                                              model=bkgdmod, 
+                                              sp_fe=sp_fe)) / yerr_cont_plot, 
+                      edgecolor='None', 
+                      s=15, 
+                      facecolor='black')
+
+    if subtract_fe is False: 
+
+        axs[2].scatter(xdat_cont_plot, 
+                      (ydat_cont_plot - resid(params=bkgdpars, 
+                                              x=xdat_cont_plot, 
+                                              model=bkgdmod)) / yerr_cont_plot, 
+                      edgecolor='None', 
+                      s=15, 
+                      facecolor='black')
+
+    
+    axs[2].axhline(0.0, color='black', linestyle='--')
+    axs[2].set_xlim(axs[0].get_xlim())
+
+    axs[3].plot(wav.value, flux, color='grey')
+
+    if subtract_fe is True:
+    
+        axs[3].plot(xdat_cont_plot, 
+                    resid(params=bkgdpars, 
+                          x=xdat_cont_plot, 
+                          model=bkgdmod, 
+                          sp_fe=sp_fe), 
+                    color='black', 
+                    lw=2)
+
+    if subtract_fe is False: 
+
+        axs[3].plot(xdat_cont_plot, 
+                    resid(params=bkgdpars, 
+                          x=xdat_cont_plot, 
+                          model=bkgdmod), 
+                    color='black', 
+                    lw=2)
+
+    if reject_outliers: 
+
+        mask = ma.getmaskarray(wav_array_blue).flatten() 
+
+        mask[ma.getdata(wav_array_blue.flatten()).value < continuum_region[0][0].value] = False
+        mask[ma.getdata(wav_array_blue.flatten()).value > continuum_region[0][1].value] = False
+
+        xdat_cont_outliers = ma.masked_where(~mask, ma.getdata(wav_array_blue).flatten())
+        ydat_cont_outliers = ma.masked_where(~mask, ma.getdata(flux_array_blue).flatten())
+
+        axs[0].scatter(xdat_cont_outliers,
+                       ydat_cont_outliers,
+                       color='firebrick', 
+                       s=40, 
+                       marker='x') 
+
+        mask = ma.getmaskarray(wav_array_red).flatten() 
+
+        mask[ma.getdata(wav_array_red.flatten()).value < continuum_region[1][0].value] = False
+        mask[ma.getdata(wav_array_red.flatten()).value > continuum_region[1][1].value] = False
+
+        xdat_cont_outliers = ma.masked_where(~mask, ma.getdata(wav_array_red).flatten())
+        ydat_cont_outliers = ma.masked_where(~mask, ma.getdata(flux_array_red).flatten())
+
+        axs[0].scatter(xdat_cont_outliers,
+                       ydat_cont_outliers,
+                       color='firebrick', 
+                       s=40, 
+                       marker='x') 
+
+    if verbose:
+
+        global coords
+        coords = [] 
+        cid = fig.canvas.mpl_connect('button_press_event', lambda x: onclick2(x, w0=w0))
+
+        plt.show(1)
+
+    plt.close() 
+
+    return None 
+
+
+def fit1(obj,
+         n_samples, 
+         plot_title, 
+         verbose, 
+         mono_lum_wav, 
+         spec_norm, 
+         z):
+
+
+    k = obj[0]
+    x = obj[1]
+    y = obj[2]
+    flux_array_fit_k = obj[3]
+    flux_array_plot_k = obj[4] 
+    wav_array_fit_k = obj[5] 
+    wav_array_plot_k = obj[6] 
+
+    bkgdmod = Model(PLModel, 
+                    param_names=['amplitude','exponent'], 
+                    independent_vars=['x']) 
+
+    bkgdpars = bkgdmod.make_params()
+
+    bkgdpars['exponent'].value = 1.0
+    bkgdpars['amplitude'].value = 1.0 
+    
+    out = minimize(resid,
+                   bkgdpars,
+                   kws={'x':x, 
+                        'model':bkgdmod, 
+                        'data':y},
+                   method='leastsq')
+
+    flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] = flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] - resid(params=out.params, x=ma.getdata(wav_array_fit_k[~ma.getmaskarray(wav_array_fit_k)]).value, model=bkgdmod)
+    flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] = flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] - resid(params=out.params, x=ma.getdata(wav_array_plot_k[~ma.getmaskarray(wav_array_plot_k)]).value, model=bkgdmod)                  
+
+    if verbose:
+        if n_samples == 1:
+            print out.message  
+            print fit_report(out.params)
+
+    ####################################################################################################################
+    """
+    Calculate flux at wavelength mono_lum_wav
+    """
+    # Calculate just power-law continuum (no Fe)
+    cont_mod = Model(PLModel, 
+                     param_names=['amplitude','exponent'], 
+                     independent_vars=['x']) 
+
+    cont_pars = cont_mod.make_params()
+    cont_pars['exponent'].value = out.params['exponent'].value
+    cont_pars['amplitude'].value = out.params['amplitude'].value  
+
+    mono_flux = resid(params=cont_pars, 
+                      x=np.array([mono_lum_wav.value]), 
+                      model=cont_mod)[0]
+    
+    mono_flux = mono_flux / spec_norm
+    mono_flux = mono_flux * (u.erg / u.cm / u.cm / u.s / u.AA)
+    lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
+
+    mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav
+
+    eqw_fe = 0.0 
+
+    if n_samples > 1: 
+        print plot_title, k
+
+    return (flux_array_fit_k, flux_array_plot_k, mono_lum, eqw_fe, out.params)
+
+def fit2(obj, 
+         n_samples, 
+         subtract_fe, 
+         home_dir, 
+         fe_FWHM, 
+         fe_FWHM_vary, 
+         spec_norm, 
+         mono_lum_wav, 
+         z,
+         wav, 
+         flux, 
+         err, 
+         verbose, 
+         wav_array_blue, 
+         flux_array_blue, 
+         wav_array_red, 
+         flux_array_red, 
+         reject_outliers, 
+         w0, 
+         maskout, 
+         continuum_region,
+         plot_title,
+         plot): 
+
+    k = obj[0]
+    x = obj[1]
+    y = obj[2]
+    er = obj[3]
+    flux_array_fit_k = obj[4]
+    flux_array_plot_k = obj[5] 
+    wav_array_fit_k = obj[6] 
+    wav_array_plot_k = obj[7] 
+
+    if len(ma.getdata(x[~ma.getmaskarray(x)]).value) == 0: 
+        if verbose:
+            print 'No flux in continuum region'
+
+    if subtract_fe is True:
+
+        ################################################################################
+        """
+        Optical FeII template
+    
+        Broaden by convolution with Gaussian using astropy 
+        Add to power-law with normalisation
+        Allow shifting as well?
+    
+        Shen does all fits in logarithmic wavelength space. 
+        Does this make a difference? 
+    
+        Convolve with width of Balmer line - might have to do iteratively 
+    
+        Either use FWHM from fit to Ha or leave convolution as a free paramter 
+        See how this compares. 
+        """
+
+        fname = os.path.join(home_dir, 'SpectraTools/irontemplate.dat')
+        fe_wav, fe_flux = np.genfromtxt(fname, unpack=True)
+    
+        fe_flux = fe_flux / np.median(fe_flux)
+    
+        sp_fe = spec.Spectrum(wa=10**fe_wav, fl=fe_flux)
+
+        bkgdmod = Model(PseudoContinuum, 
+                        param_names=['amplitude',
+                                     'exponent',
+                                     'fe_norm',
+                                     'fe_sd',
+                                     'fe_shift'], 
+                        independent_vars=['x']) 
+        
+        bkgdpars = bkgdmod.make_params() 
+        
+        fe_sigma = fe_FWHM / 2.35 
+        fe_pix = fe_sigma / (sp_fe.dv * (u.km/u.s))
+
+        bkgdpars['fe_sd'].vary = fe_FWHM_vary
+
+        bkgdpars['fe_norm'].min = 0.0
+        bkgdpars['fe_sd'].min = 2000.0 / 2.35 / sp_fe.dv
+        bkgdpars['fe_sd'].max = 12000.0 / 2.35 / sp_fe.dv
+
+        bkgdpars['fe_shift'].min = -20.0
+        bkgdpars['fe_shift'].max = 20.0
+
+        # I think that constraining the power-law slope to be negative
+        # helps break some of the degeneracy between the fe template
+        # and the continuum. I don't want to change any of my fits
+        # so for now just do this for the pseudo-continuum fit. 
+
+        # Seems to break if max is set to 0.0
+
+        # if pseudo_continuum_fit:
+
+        #     bkgdpars['exponent'].max = 0.5 
+
+        bkgdpars['fe_sd'].value = fe_pix.value  
+        bkgdpars['exponent'].value = -1.0
+        bkgdpars['amplitude'].value = 1.0
+        bkgdpars['fe_norm'].value = 0.05 
+        bkgdpars['fe_shift'].value = 0.0
+
+        out = minimize(resid,
+                       bkgdpars,
+                       kws={'x':ma.getdata(x[~ma.getmaskarray(x)]).value, 
+                            'model':bkgdmod, 
+                            'data':ma.getdata(y[~ma.getmaskarray(y)]), 
+                            'sigma':ma.getdata(er[~ma.getmaskarray(er)]), 
+                            'sp_fe':sp_fe},
+                       method='powell',
+                       options={'maxiter':1e6, 'maxfev':1e6})
+
+   
+        flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] = flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] - resid(params=out.params, x=ma.getdata(wav_array_fit_k[~ma.getmaskarray(wav_array_fit_k)]).value, model=bkgdmod, sp_fe=sp_fe)
+        flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] = flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] - resid(params=out.params, x=ma.getdata(wav_array_plot_k[~ma.getmaskarray(wav_array_plot_k)]).value, model=bkgdmod, sp_fe=sp_fe)                  
+
+        ##############################################################################
+        
+        """
+        Calculate EQW of Fe between 4435 and 4684A - same as Shen (2016)
+        """
+        fe_fl = PseudoContinuum(np.arange(4434,4684,1), 
+                                0.0,
+                                0.0,
+                                out.params['fe_norm'].value,
+                                out.params['fe_sd'].value,
+                                out.params['fe_shift'].value,
+                                sp_fe)
+
+        fe_fl = fe_fl / spec_norm 
+        fe_fl = fe_fl * (u.erg / u.cm / u.cm / u.s / u.AA) 
+
+        bg_fl = PseudoContinuum(np.arange(4434,4684,1), 
+                                out.params['amplitude'].value,
+                                out.params['exponent'].value,
+                                0.0,
+                                out.params['fe_sd'].value,
+                                out.params['fe_shift'].value,
+                                sp_fe)      
+
+        bg_fl = bg_fl / spec_norm 
+        bg_fl = bg_fl * (u.erg / u.cm / u.cm / u.s / u.AA) 
+    
+        f = (fe_fl + bg_fl) / bg_fl
+        eqw_fe = np.nansum((f[:-1] - 1.0) * 1.0) 
+
+        if verbose:
+            print 'Fe EW: {}'.format(eqw_fe)  
+
+    if subtract_fe is False:
+
+        sp_fe = None
+
+        bkgdmod = Model(PLModel, 
+                        param_names=['amplitude','exponent'], 
+                        independent_vars=['x']) 
+
+        bkgdpars = bkgdmod.make_params()    
+        bkgdpars['exponent'].value = 1.0
+        bkgdpars['amplitude'].value = 1.0 
+
+        out = minimize(resid,
+                       bkgdpars,
+                       kws={'x':ma.getdata(x[~ma.getmaskarray(x)]).value, 
+                            'model':bkgdmod, 
+                            'data':ma.getdata(y[~ma.getmaskarray(y)]),
+                            'sigma':ma.getdata(er[~ma.getmaskarray(er)])},  
+                       method='leastsq') 
+
+
+        flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] = flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] - resid(params=out.params, x=ma.getdata(wav_array_fit_k[~ma.getmaskarray(wav_array_fit_k)]).value, model=bkgdmod)
+        flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] = flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] - resid(params=out.params, x=ma.getdata(wav_array_plot_k[~ma.getmaskarray(wav_array_plot_k)]).value, model=bkgdmod)                  
+    
+        eqw_fe = 0.0
+
+    ####################################################################################################################
+    """
+    Calculate flux at wavelength mono_lum_wav
+    """
+
+    # Calculate just power-law continuum (no Fe)
+    cont_mod = Model(PLModel, 
+                     param_names=['amplitude','exponent'], 
+                     independent_vars=['x']) 
+
+
+    cont_pars = cont_mod.make_params()
+    cont_pars['exponent'].value = out.params['exponent'].value
+    cont_pars['amplitude'].value = out.params['amplitude'].value  
+
+    mono_flux = resid(params=cont_pars, 
+                      x=np.array([mono_lum_wav.value]), 
+                      model=cont_mod)[0]
+
+    mono_flux = mono_flux / spec_norm
+
+    mono_flux = mono_flux * (u.erg / u.cm / u.cm / u.s / u.AA)
+
+    lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
+
+    mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav
+
+    if n_samples > 1: 
+        print plot_title, k 
+
+
+    ######################################################################################################################
+
+    if n_samples == 1:  
+
+        if plot:
+
+            plot_continum(x, 
+                          y, 
+                          er,
+                          wav, 
+                          flux, 
+                          err, 
+                          subtract_fe, 
+                          out.params, 
+                          bkgdmod, 
+                          sp_fe, 
+                          continuum_region, 
+                          maskout, 
+                          w0, 
+                          reject_outliers, 
+                          wav_array_blue, 
+                          flux_array_blue, 
+                          wav_array_red, 
+                          flux_array_red, 
+                          verbose)
+
+
+        if verbose:
+
+            print colored(out.message, 'red'), colored('Number of function evaluations: {}'.format(out.nfev), 'red') 
+            print fit_report(out.params)
+    
+            if subtract_fe is True:
+                print 'Fe FWHM = {0:.1f} km/s (initial = {1:.1f} km/s)'.format(out.params['fe_sd'].value * 2.35 * sp_fe.dv, out.params['fe_sd'].init_value * 2.35 * sp_fe.dv)            
+            
+
+    # if pseudo_continuum_fit:
+
+    #     """
+    #     Only fitting PseudoContinuum - BROKEN SINCE MADE IN TO A FUNCTION! 
+    #     """
+
+    #     fit_out = {'name':plot_title,
+    #                'monolum':np.log10(mono_lum.value),
+    #                'fe_ew':eqw_fe} 
+
+    #     if n_samples == 1:       
+
+    #         return fit_out
+
+    #     else: 
+       
+    #         if save_dir is not None:
+    #             df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+
+    #         return None 
+
+    return (flux_array_fit_k, flux_array_plot_k, mono_lum, eqw_fe, out.params)
+
+
+def fit3(obj, 
+         fit_model, 
+         nGaussians, 
+         gh_order, 
+         fitting_region, 
+         ha_narrow_fwhm, 
+         ha_narrow_vary, 
+         ha_narrow_voff, 
+         w0, 
+         hb_narrow, 
+         n_samples, 
+         plot, 
+         continuum_region, 
+         fitting_method, 
+         save_dir, 
+         subtract_fe, 
+         home_dir,
+         z, 
+         line_region, 
+         spec_norm, 
+         plot_title,
+         verbose,
+         spec_dv,
+         wav, 
+         flux, 
+         err,
+         mono_lum_wav,
+         emission_line,
+         plot_savefig,
+         maskout,
+         plot_region,
+         mask_negflux,
+         reject_outliers,
+         reject_width,
+         reject_sigma,
+         fig,
+         fit,
+         residuals,
+         fix_broad_peaks,
+         oiii_broad_off):
+
+
+    k = obj[0]
+    x = obj[1]
+    y = obj[2]
+    er = obj[3]
+    wav_array_plot_k = obj[4]
+    vdat_array_plot_k = obj[5]
+    flux_array_plot_k = obj[6]
+    err_array_plot_k = obj[7]
+    bkgdpars_k = obj[8]
+    mono_lum_k = obj[9]
+    eqw_fe_k = obj[10]
+    snr_k = obj[11]
+
+    if subtract_fe is True:
+
+        bkgdmod = Model(PseudoContinuum, 
+                        param_names=['amplitude',
+                                     'exponent',
+                                     'fe_norm',
+                                     'fe_sd',
+                                     'fe_shift'], 
+                        independent_vars=['x']) 
+
+        fname = os.path.join(home_dir, 'SpectraTools/irontemplate.dat')
+        fe_wav, fe_flux = np.genfromtxt(fname, unpack=True)
+        fe_flux = fe_flux / np.median(fe_flux)
+        sp_fe = spec.Spectrum(wa=10**fe_wav, fl=fe_flux)
+
+
+    if subtract_fe is False:                
+
+        bkgdmod = Model(PLModel, 
+                        param_names=['amplitude','exponent'], 
+                        independent_vars=['x'])
+
+    if fit_model == 'MultiGauss':
+
+        xscale = 1.0 
+
+        # Make model 
+        bkgd = ConstantModel()
+        mod = bkgd
+        pars = bkgd.make_params()
+        
+        # A bit unnessesary, but I need a way to do += in the loop below
+        pars['c'].value = 0.0
+        pars['c'].vary = False
+
+        for i in range(nGaussians):
+            gmod = GaussianModel(prefix='g{}_'.format(i))
+            mod += gmod
+            pars += gmod.guess(y[~ma.getmaskarray(y)], x=ma.getdata(x[~ma.getmaskarray(x)]).value)
+               
+        for i in range(nGaussians):
+            pars['g{}_center'.format(i)].value = 0.0
+            pars['g{}_center'.format(i)].min = -2000.0
+            pars['g{}_center'.format(i)].max = 2000.0 
+            pars['g{}_amplitude'.format(i)].min = 0.0
+            # pars['g{}_sigma'.format(i)].min = 1000.0 # sometimes might be better if this is relaxed 
+            # pars['g{}_sigma'.format(i)].max = 10000.0 
+            # pars['g0_center'].set(expr='g1_center')
+            pars['g{}_amplitude'.format(i)].value =  1.0 
+            pars['g{}_sigma'.format(i)].value = 1200.0 
+
+        if fix_broad_peaks:
+
+                for i in range(1, nGaussians):
+                    pars['g{}_center'.format(i)].set(expr = 'g0_center')
+
+
+    elif fit_model == 'GaussHermite':
+
+        # Calculate mean and variance
+
+        """
+        Because p isn't a real probability distribution we sometimes get negative 
+        variances if a lot of the flux is negative. 
+        Therefore confine this to only work on the bit of the 
+        spectrum that is positive
+        """
+
+        ydat = ma.getdata(y[~ma.getmaskarray(y)])
+        vdat = ma.getdata(x[~ma.getmaskarray(x)])
+
+        p = ydat[ydat > 0.0] / np.sum(ydat[ydat > 0.0])
+        m = np.sum(vdat[ydat > 0.0] * p)
+        v = np.sum(p * (vdat[ydat > 0.0] - m)**2)
+        xscale = np.sqrt(v).value 
+
+        if xscale == 0.0:
+
+            """ 
+            Breaks when I'm calculating errors, but the fit is very bad. 
+            Just exit and return empty list - 
+            """
+
+            fit_out = {'name':plot_title, 
+                       'fwhm':np.nan,
+                       'fwhm_1':np.nan,
+                       'fwhm_2':np.nan,
+                       'fwhm_3':np.nan,
+                       'sigma':np.nan,
+                       'median':np.nan,
+                       'cen':np.nan,
+                       'cen_1':np.nan,
+                       'cen_2':np.nan,
+                       'cen_3':np.nan,
+                       'eqw':np.nan,
+                       'broad_lum':np.nan,
+                       'peak':np.nan, 
+                       'amplitude_1':np.nan,
+                       'amplitude_2':np.nan,
+                       'amplitude_3':np.nan,
+                       'narrow_fwhm':np.nan,
+                       'narrow_lum':np.nan,
+                       'narrow_voff':np.nan, 
+                       'oiii_5007_eqw':np.nan,
+                       'oiii_5007_lum':np.nan,
+                       'oiii_5007_n_lum':np.nan,
+                       'oiii_5007_b_lum':np.nan,
+                       'oiii_fwhm':np.nan,
+                       'oiii_n_fwhm':np.nan,
+                       'oiii_b_fwhm':np.nan,
+                       'oiii_5007_b_voff':np.nan,
+                       'oiii_5007_blueshift':np.nan,
+                       'redchi':np.nan,
+                       'snr':np.nan,
+                       'dv':np.nan, 
+                       'monolum':np.nan,
+                       'fe_ew':np.nan}
+
+            return fit_out 
+
+        param_names = []
+
+        for i in range(gh_order + 1):
+            
+            param_names.append('amp{}'.format(i))
+            param_names.append('sig{}'.format(i))
+            param_names.append('cen{}'.format(i))
+
+        if gh_order == 0: 
+ 
+            mod = Model(gausshermite_0, independent_vars=['x'], param_names=param_names) 
+    
+        if gh_order == 1: 
+ 
+            mod = Model(gausshermite_1, independent_vars=['x'], param_names=param_names) 
+     
+        if gh_order == 2: 
+ 
+            mod = Model(gausshermite_2, independent_vars=['x'], param_names=param_names) 
+     
+        if gh_order == 3: 
+ 
+            mod = Model(gausshermite_3, independent_vars=['x'], param_names=param_names) 
+     
+        if gh_order == 4: 
+ 
+            mod = Model(gausshermite_4, independent_vars=['x'], param_names=param_names) 
+     
+        if gh_order == 5: 
+ 
+            mod = Model(gausshermite_5, independent_vars=['x'], param_names=param_names) 
+
+        if gh_order == 6: 
+ 
+            mod = Model(gausshermite_6, independent_vars=['x'], param_names=param_names) 
+
+        pars = mod.make_params()
+
+        for i in range(gh_order + 1):
+
+            pars['amp{}'.format(i)].value = 1.0
+            pars['sig{}'.format(i)].value = 1.0
+            pars['cen{}'.format(i)].value = 0.0
+ 
+            # remember that wav_fitting_array mask includes the background windows, 
+            # so don't use this 
+            # already converted fitting_region in to units of wavelength. 
+
+            pars['cen{}'.format(i)].min = wave2doppler(fitting_region[0], w0).value / xscale
+            pars['cen{}'.format(i)].max = wave2doppler(fitting_region[1], w0).value / xscale
+
+            pars['sig{}'.format(i)].min = 0.1
+
+            pars['amp{}'.format(i)].min = 0.0    
+
+        
+    elif fit_model == 'Ha':
+
+        """
+        Implement the Shen+15/11 fitting procedure
+        The narrow components of Hα, [NII]λλ6548,6584, [SII]λλ6717,6731 are each fit with a single Gaussian. 
+        Their velocity offsets from the systemic redshift and line widths are constrained to be the same
+        The relative flux ratio of the two [NII] components is fixed to 2.96 - which way round is this? 
+        We impose an upper limit on the narrow line FWHM < 1200 km/s 
+        The broad Hα component is modelled in two different ways: 
+        a) a single Gaussian with a FWHM > 1200 km/s; 
+        b) multiple Gaussians with up to three Gaussians, each with a FWHM >1200 km/s. 
+        The second method yields similar results to the fits with a truncated Gaussian-Hermite function. 
+        During the fitting, all lines are restricted to be emission lines (i.e., positive flux)
+
+        Also fit Boroson and Green iron template 
+
+        """
+
+        xscale = 1.0 
+
+        mod = GaussianModel(prefix='ha_n_')  
+
+        mod += GaussianModel(prefix='nii_6548_n_')
+
+        mod += GaussianModel(prefix='nii_6584_n_')
+
+        mod += GaussianModel(prefix='sii_6717_n_')
+
+        mod += GaussianModel(prefix='sii_6731_n_')
+
+
+        for i in range(nGaussians):
+
+            mod += GaussianModel(prefix='ha_b_{}_'.format(i))  
+
+        pars = mod.make_params() 
+
+        pars['nii_6548_n_amplitude'].value = 1000.0
+        pars['nii_6584_n_amplitude'].value = 1000.0
+        pars['sii_6717_n_amplitude'].value = 1000.0 
+        pars['sii_6731_n_amplitude'].value = 1000.0 
+        pars['ha_n_amplitude'].value = 1000.0  
+        for i in range(nGaussians):
+            pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
+
+        for i in range(nGaussians): 
+            pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
+            pars['ha_b_{}_center'.format(i)].min = -2000.0  
+            pars['ha_b_{}_center'.format(i)].max = 2000.0  
+
+        if fix_broad_peaks:
+
+            if nGaussians == 2:
+                pars['ha_b_1_center'].set(expr = 'ha_b_0_center')
+            elif nGaussians == 3:
+                pars['ha_b_2_center'].set(expr = 'ha_b_0_center')
+
+        pars['nii_6548_n_sigma'].value = ha_narrow_fwhm / 2.35 
+        pars['nii_6584_n_sigma'].value = ha_narrow_fwhm / 2.35
+        pars['sii_6717_n_sigma'].value = ha_narrow_fwhm / 2.35
+        pars['sii_6731_n_sigma'].value = ha_narrow_fwhm / 2.35
+        pars['ha_n_sigma'].value = ha_narrow_fwhm / 2.35 
+
+        if ha_narrow_vary is False:
+
+            pars['nii_6548_n_sigma'].vary = False
+            pars['nii_6584_n_sigma'].vary = False
+            pars['sii_6717_n_sigma'].vary = False
+            pars['sii_6731_n_sigma'].vary = False
+            pars['ha_n_sigma'].vary = False
+
+        else:
+
+            pars['ha_n_sigma'].max = 1200.0 / 2.35 
+            pars['ha_n_sigma'].min = 400.0 / 2.35 
+            pars['nii_6548_n_sigma'].set(expr='ha_n_sigma')
+            pars['nii_6584_n_sigma'].set(expr='ha_n_sigma')
+            pars['sii_6717_n_sigma'].set(expr='ha_n_sigma')
+            pars['sii_6731_n_sigma'].set(expr='ha_n_sigma')
+   
+        for i in range(nGaussians): 
+            pars['ha_b_{}_sigma'.format(i)].value = 1200.0
+
+        for i in range(nGaussians): 
+            pars['ha_b_{}_sigma'.format(i)].min = 1200.0 / 2.35
+
+        pars['nii_6548_n_amplitude'].min = 0.0
+        pars['nii_6584_n_amplitude'].min = 0.0
+        pars['sii_6717_n_amplitude'].min = 0.0 
+        pars['sii_6731_n_amplitude'].min = 0.0 
+        pars['ha_n_amplitude'].min = 0.0 
+        for i in range(nGaussians): 
+            pars['ha_b_{}_amplitude'.format(i)].min = 0.0  
+        
+        pars['ha_n_center'].value = ha_narrow_voff 
+        pars['sii_6731_n_center'].value = ha_narrow_voff + wave2doppler(6731*u.AA, w0).value 
+        pars['sii_6717_n_center'].value = ha_narrow_voff + wave2doppler(6717*u.AA, w0).value 
+        pars['nii_6548_n_center'].value = ha_narrow_voff + wave2doppler(6548*u.AA, w0).value 
+        pars['nii_6584_n_center'].value  = ha_narrow_voff + wave2doppler(6584*u.AA, w0).value 
+
+        if ha_narrow_vary is False:
+
+            pars['ha_n_center'].vary = False 
+            pars['sii_6731_n_center'].vary = False 
+            pars['sii_6717_n_center'].vary = False 
+            pars['nii_6548_n_center'].vary = False 
+            pars['nii_6584_n_center'].vary = False  
+
+        else: 
+
+            pars['ha_n_center'].min = -500.0
+            pars['ha_n_center'].max = 500.0
+    
+            pars['sii_6731_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6731*u.AA, w0).value))
+            pars['sii_6717_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6717*u.AA, w0).value))
+            pars['nii_6548_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6548*u.AA, w0).value))
+            pars['nii_6584_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6584*u.AA, w0).value))
+
+        pars['nii_6548_n_amplitude'].set(expr='0.333*nii_6584_n_amplitude')
+
+        # if si unconstrained to stop it giving something silly. 
+        wmax = doppler2wave(np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale).max()*(u.km/u.s), w0)
+        if wmax < 6717*u.AA:
+            pars['sii_6717_n_amplitude'].value = 0.0
+            pars['sii_6717_n_amplitude'].vary = False 
+            pars['sii_6731_n_amplitude'].value = 0.0
+            pars['sii_6731_n_amplitude'].vary = False 
+            
+
+    elif fit_model == 'Hb':
+
+        """
+        From Shen+15/11
+
+        Need to get Boroson and Green (1992) optical iron template, 
+        which people seem to convolve with a Gaussian
+    
+        Model each [OIII] line with Gaussian, one for the core and the other for the blue wing.
+        Decide whether to fix flux ratio 3:1
+        Velocity offset and FWHM of narrow Hb tied to the core [OIII] components
+        Upper limit of 1200 km/s on the narrow line FWHM
+        Broad Hb modelled by single gaussian, or up to 3 Gaussians each with FWHM > 1200 km/s
+
+        It seams like a = b not the same as b = a, which is annoying. 
+        Need to be careful
+
+        """
+
+        xscale = 1.0 
+
+        mod = GaussianModel(prefix='oiii_4959_n_')
+
+        mod += GaussianModel(prefix='oiii_5007_n_')
+
+        mod += GaussianModel(prefix='oiii_4959_b_')
+
+        mod += GaussianModel(prefix='oiii_5007_b_')
+
+        if hb_narrow is True: 
+            mod += GaussianModel(prefix='hb_n_')  
+
+        for i in range(nGaussians):
+
+            mod += GaussianModel(prefix='hb_b_{}_'.format(i))  
+
+        pars = mod.make_params() 
+
+        pars['oiii_4959_n_amplitude'].value = 1000.0
+        pars['oiii_5007_n_amplitude'].value = 1000.0
+        pars['oiii_4959_b_amplitude'].value = 1000.0 
+        pars['oiii_5007_b_amplitude'].value = 1000.0 
+        if hb_narrow is True: 
+            pars['hb_n_amplitude'].value = 1000.0  
+        for i in range(nGaussians):
+            pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
+
+        pars['oiii_4959_n_amplitude'].min = 0.0
+        pars['oiii_5007_n_amplitude'].min = 0.0
+        pars['oiii_4959_b_amplitude'].min = 0.0 
+        pars['oiii_5007_b_amplitude'].min = 0.0 
+        if hb_narrow is True:      
+            pars['hb_n_amplitude'].min = 0.0 
+        for i in range(nGaussians): 
+            pars['hb_b_{}_amplitude'.format(i)].min = 0.0  
+
+        # Make sure we don't have all broad and no narrow component 
+        # pars.add('oiii_5007_b_height_delta')
+        # pars['oiii_5007_b_height_delta'].value = 0.5 
+        # pars['oiii_5007_b_height_delta'].max = 2.0
+        # pars['oiii_5007_b_height_delta'].min = 0.0
+        # pars['oiii_5007_b_amplitude'].set(expr='oiii_5007_n_amplitude * oiii_5007_b_height_delta')
+        
+
+        # pars['oiii_5007_b_amplitude'].set(expr='((oiii_5007_n_amplitude/oiii_5007_n_sigma)*oiii_5007_b_height_delta)*oiii_5007_b_sigma')
+
+        # Set 3:1 [OIII] peak ratio  
+        pars['oiii_4959_n_amplitude'].set(expr='0.3333*oiii_5007_n_amplitude')
+
+        # Also set 3:1 [OIII] peak ratio for broad components 
+        pars['oiii_4959_b_amplitude'].set(expr='0.3333*oiii_5007_b_amplitude')
+
+
+        # ---------------------------------------------------------------
+
+        pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+        pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+        pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+        pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+        if hb_narrow is True: 
+            pars['hb_n_center'].value = 0.0    
+        
+        for i in range(nGaussians): 
+            pars['hb_b_{}_center'.format(i)].value = 0.0  
+            pars['hb_b_{}_center'.format(i)].min = -2000.0  
+            pars['hb_b_{}_center'.format(i)].max = 2000.0  
+
+        if fix_broad_peaks:
+
+            if nGaussians == 2:
+                pars['hb_b_1_center'].set(expr = 'hb_b_0_center')
+            elif nGaussians == 3:
+                pars['hb_b_2_center'].set(expr = 'hb_b_0_center')
+
+
+        pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 3000.0
+        pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 3000.0
+        
+        if hb_narrow is True: 
+            pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
+        
+        pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
+
+
+        pars.add('oiii_5007_b_center_delta') 
+        pars['oiii_5007_b_center_delta'].value = 500.0 
+        pars['oiii_5007_b_center_delta'].min = 0.0
+        pars['oiii_5007_b_center_delta'].max = 1500.0
+        pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
+        pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_5007_b_center_delta')
+
+        # Set broad components of OIII to have fixed relative velocity
+        # pars['oiii_4959_b_center'].set(expr = 'oiii_5007_b_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
+
+
+        #----------------------------------------------------------------------
+
+        pars['oiii_4959_n_sigma'].value = 500.0 / 2.35
+        pars['oiii_5007_n_sigma'].value = 500.0 / 2.35
+        pars['oiii_4959_b_sigma'].value = 1000.0 / 2.35
+        pars['oiii_5007_b_sigma'].value = 1000.0 / 2.35
+        if hb_narrow is True: 
+            pars['hb_n_sigma'].value = 500.0 / 2.35
+        for i in range(nGaussians): 
+            pars['hb_b_{}_sigma'.format(i)].value = 1200.0 
+
+        for i in range(nGaussians): 
+            pars['hb_b_{}_sigma'.format(i)].min = 1000.0 / 2.35
+    
+        pars['oiii_5007_b_sigma'].max = 1200.0 / 2.35 
+        pars['oiii_5007_b_sigma'].min = 100.0 / 2.35 
+        pars['oiii_4959_b_sigma'].set(expr='oiii_5007_b_sigma')
+
+        pars['oiii_5007_n_sigma'].min = 100.0 / 2.35 
+        pars['oiii_5007_n_sigma'].max = 1200.0 / 2.35 
+
+        # make sure broad component of oiii is broader than narrow component 
+        # pars.add('oiii_5007_n_sigma_delta')
+        # pars['oiii_5007_n_sigma_delta'].value = 0.5
+        # pars['oiii_5007_n_sigma_delta'].max = 0.9
+        # pars['oiii_5007_n_sigma'].set(expr='oiii_5007_b_sigma*oiii_5007_n_sigma_delta', min=100.0/2.35, max=1200.0/2.35)
+
+
+        pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
+
+        if hb_narrow is True: 
+            pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
+
+
+        if oiii_broad_off:
+            pars['oiii_4959_b_amplitude'].set(value=0.0, vary=False)
+            pars['oiii_5007_b_amplitude'].set(value=0.0, vary=False)
+            pars['oiii_4959_b_sigma'].set(value=1200.0/2.35, vary=False)
+            pars['oiii_5007_b_sigma'].set(value=1200.0/2.35, vary=False)
+            pars['oiii_4959_b_center'].set(value=wave2doppler(4960.295*u.AA, w0).value, vary=False)
+            pars['oiii_5007_b_center'].set(value=wave2doppler(5008.239*u.AA, w0).value, vary=False)
+
+
+
+
+    elif fit_model == 'siiv':
+
+        xscale = 1.0 
+
+        mod = GaussianModel(prefix='g0_') + GaussianModel(prefix='g1_') + GaussianModel(prefix='g2_') + GaussianModel(prefix='g3_') 
+        
+        pars = mod.make_params() 
+
+        pars['g0_amplitude'].value = 1.0
+        pars['g1_amplitude'].value = 1.0
+        pars['g2_amplitude'].value = 1.0
+        pars['g3_amplitude'].value = 1.0
+
+        pars['g0_amplitude'].min = 0.0
+        pars['g1_amplitude'].min = 0.0
+        
+        pars['g2_amplitude'].set(expr='g0_amplitude')
+        pars['g3_amplitude'].set(expr='g1_amplitude')
+
+        pars['g0_sigma'].value = 1.0
+        pars['g1_sigma'].value = 1.0
+        pars['g2_sigma'].value = 1.0
+        pars['g3_sigma'].value = 1.0
+
+        pars['g0_sigma'].min = 1000.0
+        pars['g1_sigma'].min = 1000.0
+
+        pars['g2_sigma'].set(expr='g0_sigma')
+        pars['g3_sigma'].set(expr='g1_sigma')
+
+        pars['g0_center'].value = 0.0
+        pars['g1_center'].value = 0.0
+        pars['g2_center'].value = 0.0
+        pars['g3_center'].value = 0.0
+
+        pars['g1_center'].set(expr='g0_center')        
+        pars['g2_center'].set(expr = 'g0_center+{}'.format(wave2doppler(1402*u.AA, w0).value - wave2doppler(1397*u.AA, w0).value))
+        pars['g3_center'].set(expr='g2_center')
+
+    if fitting_method == 'leastsq':
+
+        out = minimize(resid,
+                       pars,
+                       kws={'x':np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale), 
+                            'model':mod, 
+                            'data':ma.getdata(y[~ma.getmaskarray(y)]),
+                            'sigma':ma.getdata(er[~ma.getmaskarray(er)])},
+                       method=fitting_method
+                       )         
+
+
+    else:
+
+        out = minimize(resid,
+                       pars,
+                       kws={'x':np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale), 
+                            'model':mod, 
+                            'data':ma.getdata(y[~ma.getmaskarray(y)]),
+                            'sigma':ma.getdata(er[~ma.getmaskarray(er)])},
+                       method=fitting_method,
+                       options={'maxiter':1e6, 'maxfev':1e6} 
+                       )                   
+
+    
+    if n_samples == 1: 
+    
+        if verbose:
+        
+            print colored(out.message, 'red'), colored('Number of function evaluations: {}'.format(out.nfev), 'red') 
+            
+            if fit_model == 'GaussHermite':
+    
+                for key, value in out.params.valuesdict().items():
+                    if 'cen' in key:
+                        print key, value * xscale
+                    else:
+                        print key, value
+    
+            else:
+    
+                print fit_report(out.params)
+
+    if (plot) & (n_samples > 1):
+
+        xdat_plot = ma.getdata(wav_array_plot_k[~ma.getmaskarray(wav_array_plot_k)]).value 
+        vdat_plot = ma.getdata(vdat_array_plot_k[~ma.getmaskarray(vdat_array_plot_k)]).value 
+        ydat_plot = ma.getdata(flux_array_plot_k[~ma.getmaskarray(flux_array_plot_k)]) 
+        yerr_plot = ma.getdata(err_array_plot_k[~ma.getmaskarray(err_array_plot_k)])
+
+        if 'pts1' in locals():
+            pts1.set_data((vdat_plot, ydat_plot))
+        else:
+            pts1, = fit.plot(vdat_plot, ydat_plot, markerfacecolor='grey', markeredgecolor='None', linestyle='', marker='o', markersize=2)
+
+        if 'pts2' in locals():
+            pts2.set_data((vdat_plot, (ydat_plot - resid(params=out.params, x=vdat_plot/xscale, model=mod)) / yerr_plot))
+        else:
+            pts2, = residuals.plot(vdat_plot, (ydat_plot - resid(params=out.params, x=vdat_plot/xscale, model=mod)) / yerr_plot, markerfacecolor='grey', markeredgecolor='None', linestyle='', marker='o', markersize=2)
+
+        vs = np.linspace(vdat_plot.min(), vdat_plot.max(), 1000)
+
+        if 'line' in locals():
+            line.set_data((vs, resid(params=out.params, x=vs/xscale, model=mod)))
+        else:
+            line, = fit.plot(vs, resid(params=out.params, x=vs/xscale, model=mod), color='black')
+
+        fig.set_tight_layout(True)
+
+
+        plt.pause(0.1)
+
+
+    if save_dir is not None:
+        
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+    
+        if n_samples == 1: 
+    
+            param_file = os.path.join(save_dir, 'my_params.txt')
+            parfile = open(param_file, 'w')
+            out.params.dump(parfile)
+            parfile.close()
+    
+            wav_file = os.path.join(save_dir, 'wav.txt')
+            parfile = open(wav_file, 'wb')
+            pickle.dump(wav, parfile, -1)
+            parfile.close()    
+    
+            if subtract_fe is True:
+                flux_dump = flux - resid(params=bkgdpars_k, 
+                                         x=wav.value, 
+                                         model=bkgdmod,
+                                         sp_fe=sp_fe)
+            
+            if subtract_fe is False:
+                flux_dump = flux - resid(params=bkgdpars_k, 
+                                         x=wav.value, 
+                                         model=bkgdmod)
+
+
+    
+            flx_file = os.path.join(save_dir, 'flx.txt')
+            parfile = open(flx_file, 'wb')
+            pickle.dump(flux_dump, parfile, -1)
+            parfile.close()
+    
+            err_file = os.path.join(save_dir, 'err.txt')
+            parfile = open(err_file, 'wb')
+            pickle.dump(err, parfile, -1)
+            parfile.close()
+    
+            sd_file = os.path.join(save_dir, 'sd.txt')
+            parfile = open(sd_file, 'wb')
+            pickle.dump(xscale, parfile, -1)
+            parfile.close()
+    
+            fittxt = ''    
+            fittxt += strftime("%Y-%m-%d %H:%M:%S", gmtime()) + '\n \n'
+            fittxt += plot_title + '\n \n'
+            fittxt += r'Converged with chi-squared = ' + str(out.chisqr) + ', DOF = ' + str(out.nfree) + '\n \n'
+            fittxt += fit_report(out.params)
+    
+            with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+                f.write(fittxt) 
+
+    # Calculate stats 
+    
+    if fit_model == 'Hb':
+    
+        """
+        Only use broad Hb components to calculate stats 
+        """
+    
+        mod_broad_hb = ConstantModel()
+    
+        for i in range(nGaussians):
+            mod_broad_hb += GaussianModel(prefix='hb_b_{}_'.format(i))  
+    
+        pars_broad_hb = mod_broad_hb.make_params()
+       
+        pars_broad_hb['c'].value = 0.0
+       
+        for key, value in out.params.valuesdict().iteritems():
+            if key.startswith('hb_b_'):
+                pars_broad_hb[key].value = value 
+
+
+        integrand = lambda x: mod_broad_hb.eval(params=pars_broad_hb, x=np.array(x))
+    
+    elif fit_model == 'Ha':
+    
+        """
+        Only use broad Hb components to calculate stats 
+        """
+    
+        mod_broad_ha = ConstantModel()
+    
+        for i in range(nGaussians):
+            mod_broad_ha += GaussianModel(prefix='ha_b_{}_'.format(i))  
+    
+        pars_broad_ha = mod_broad_ha.make_params()
+       
+        pars_broad_ha['c'].value = 0.0
+       
+        for key, value in out.params.valuesdict().iteritems():
+            if key.startswith('ha_b_'):
+                pars_broad_ha[key].value = value 
+                
+    
+        integrand = lambda x: mod_broad_ha.eval(params=pars_broad_ha, x=np.array(x))    
+    
+    else:
+    
+        integrand = lambda x: mod.eval(params=out.params, x=np.array(x))
+    
+    # Calculate FWHM of distribution
+    if line_region.unit == u.AA:
+        line_region = wave2doppler(line_region, w0)
+    
+    dv = 1.0 # i think if this was anything else might need to change intergration.
+    xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
+    
+    norm = np.sum(integrand(xs) * dv)
+    pdf = integrand(xs) / norm
+    cdf = np.cumsum(pdf)
+    cdf_r = np.cumsum(pdf[::-1])[::-1] # reverse cumsum
+
+    # max of line
+    peak_flux = np.max(integrand(xs)) / spec_norm
+    
+    func_center = xs[np.argmax(pdf)] 
+    
+    half_max = np.max(pdf) / 2.0
+    
+    i = 0
+    while pdf[i] < half_max:
+        i+=1
+    
+    root1 = xs[i]
+    
+    i = 0
+    while pdf[-i] < half_max:
+        i+=1
+    
+    root2 = xs[-i]
+    
+    md = xs[np.argmin( np.abs( cdf - 0.5))]
+    
+    m = np.sum(xs * pdf * dv)
+    
+    v = np.sum( (xs-m)**2 * pdf * dv )
+    sd = np.sqrt(v)
+    
+    # Equivalent width
+    flux_line = integrand(xs)
+    xs_wav = doppler2wave(xs*xscale*(u.km/u.s), w0)
+    
+    if subtract_fe is True:
+        flux_bkgd = resid(params=bkgdpars_k, 
+                          x=xs_wav.value, 
+                          model=bkgdmod,
+                          sp_fe=sp_fe)
+    
+    if subtract_fe is False:
+
+        flux_bkgd = resid(params=bkgdpars_k, 
+                          x=xs_wav.value, 
+                          model=bkgdmod)
+    
+    f = (flux_line + flux_bkgd) / flux_bkgd
+    eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
+    eqw = np.nansum(eqw)
+    
+    # Broad luminosity
+    lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)        
+    broad_lum = np.sum(integrand(xs)[:-1] * np.diff(xs_wav.value)) * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm 
+    
+    if fit_model == 'Ha':       
+        
+        # I know that the Gaussians are normalised, so the area is just the amplitude, so surely
+        # I shouldn't have to do this function evaluation. 
+
+        broad_fwhms = np.zeros(nGaussians)
+        broad_cens = np.zeros(nGaussians)
+        broad_amps = np.zeros(nGaussians)
+
+        for i in range(nGaussians):   
+            broad_fwhms[i] = np.array(out.params['ha_b_{}_fwhm'.format(i)].value)
+            broad_cens[i] = np.array(out.params['ha_b_{}_center'.format(i)].value)
+            broad_amps[i] = np.array(out.params['ha_b_{}_amplitude'.format(i)].value)
+
+        inds = np.argsort(broad_fwhms)[::-1]
+
+        broad_fwhms = broad_fwhms[inds]
+        broad_cens = broad_cens[inds]
+        broad_amps = broad_amps[inds]
+
+        if len(broad_fwhms) == 1:
+            broad_fwhms = np.append(broad_fwhms, np.nan)
+            broad_cens = np.append(broad_cens, np.nan)
+            broad_amps = np.append(broad_amps, np.nan)
+
+        if len(broad_fwhms) == 2: 
+            broad_fwhms = np.append(broad_fwhms, np.nan)
+            broad_cens = np.append(broad_cens, np.nan)
+            broad_amps = np.append(broad_amps, np.nan)
+
+
+        narrow_mod = GaussianModel()
+        narrow_pars = narrow_mod.make_params()
+        narrow_pars['amplitude'].value = out.params['ha_n_amplitude'].value
+        narrow_pars['sigma'].value = out.params['ha_n_sigma'].value 
+        narrow_pars['center'].value = out.params['ha_n_center'].value 
+    
+        narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
+                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+    
+        narrow_fwhm = out.params['ha_n_fwhm'].value 
+        narrow_voff = out.params['ha_n_center'].value 
+    
+        oiii_5007_eqw = np.nan 
+        oiii_5007_lum = np.nan * (u.erg / u.s)
+        oiii_5007_n_lum = np.nan * (u.erg / u.s)
+        oiii_5007_b_lum = np.nan * (u.erg / u.s)
+        oiii_5007_fwhm = np.nan
+        oiii_5007_n_fwhm = np.nan 
+        oiii_5007_b_fwhm = np.nan 
+        oiii_5007_b_voff = np.nan 
+        oiii_5007_blueshift = np.nan 
+    
+        #######################################################################
+        """
+        Nicely print out important fitting info
+        """     
+        
+        if verbose: 
+
+            if n_samples == 1: 
+                if out.params['ha_n_sigma'].vary is True:
+                    print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(out.params['ha_n_sigma'].value * 2.35, 
+                                                                                                                      out.params['ha_n_sigma'].init_value * 2.35, 
+                                                                                                                      out.params['ha_n_sigma'].vary, 
+                                                                                                                      out.params['ha_n_sigma'].min * 2.35, 
+                                                                                                                      out.params['ha_n_sigma'].max * 2.35) 
+                else:
+                    print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(out.params['ha_n_sigma'].value * 2.35, 
+                                                                     out.params['ha_n_sigma'].vary) 
+        
+                if out.params['ha_n_center'].vary is True:
+                    print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(out.params['ha_n_center'].value, 
+                                                                                                                        out.params['ha_n_center'].init_value, 
+                                                                                                                        out.params['ha_n_center'].vary, 
+                                                                                                                        out.params['ha_n_center'].min, 
+                                                                                                                        out.params['ha_n_center'].max) 
+                else:
+                    print 'Narrow Center = {0:.1f}, Vary = {1}'.format(out.params['ha_n_center'].value, 
+                                                                       out.params['ha_n_center'].vary)     
+                                                                 
+                                                                 
+                                                        
+    
+    
+    
+    elif fit_model == 'Hb':    
+
+        broad_fwhms = np.zeros(nGaussians)
+        broad_cens = np.zeros(nGaussians)
+        broad_amps = np.zeros(nGaussians)
+
+        for i in range(nGaussians):   
+            broad_fwhms[i] = np.array(out.params['hb_b_{}_fwhm'.format(i)].value)
+            broad_cens[i] = np.array(out.params['hb_b_{}_center'.format(i)].value)
+            broad_amps[i] = np.array(out.params['hb_b_{}_amplitude'.format(i)].value)
+
+        inds = np.argsort(broad_fwhms)[::-1]
+
+        broad_fwhms = broad_fwhms[inds]
+        broad_cens = broad_cens[inds]
+        broad_amps = broad_amps[inds]
+
+        if len(broad_fwhms) == 1:
+
+            broad_fwhms = np.append(broad_fwhms, np.nan)
+            broad_cens = np.append(broad_cens, np.nan)
+            broad_amps = np.append(broad_amps, np.nan)
+
+        if len(broad_fwhms) == 2:
+
+            broad_fwhms = np.append(broad_fwhms, np.nan)
+            broad_cens = np.append(broad_cens, np.nan)
+            broad_amps = np.append(broad_amps, np.nan)
+
+    
+        oiii_5007_b_mod = GaussianModel()
+        oiii_5007_b_pars = oiii_5007_b_mod.make_params() 
+    
+        oiii_5007_b_pars['amplitude'].value = out.params['oiii_5007_b_amplitude'].value
+        oiii_5007_b_pars['sigma'].value = out.params['oiii_5007_b_sigma'].value 
+        oiii_5007_b_pars['center'].value = out.params['oiii_5007_b_center'].value 
+    
+        oiii_5007_b_xs = np.arange(oiii_5007_b_pars['center'].value - 10000.0, 
+                                   oiii_5007_b_pars['center'].value + 10000.0, 
+                                   dv)
+    
+        oiii_5007_b_xs_wav = doppler2wave(oiii_5007_b_xs*(u.km/u.s), w0) 
+    
+    
+        oiii_5007_b_lum = np.sum(oiii_5007_b_mod.eval(params=oiii_5007_b_pars, x=oiii_5007_b_xs)[:-1] * np.diff(oiii_5007_b_xs_wav.value)) * \
+                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+    
+        oiii_5007_b_fwhm = oiii_5007_b_pars['sigma'].value * 2.35 
+    
+        # Velocity of broad component of OIII relative to narrow component
+        oiii_5007_b_voff = out.params['oiii_5007_b_center_delta'].value  
+
+        oiii_5007_n_mod = GaussianModel()
+        oiii_5007_n_pars = oiii_5007_n_mod.make_params() 
+    
+        oiii_5007_n_pars['amplitude'].value = out.params['oiii_5007_n_amplitude'].value
+        oiii_5007_n_pars['sigma'].value = out.params['oiii_5007_n_sigma'].value 
+        oiii_5007_n_pars['center'].value = out.params['oiii_5007_n_center'].value 
+    
+        oiii_5007_n_xs = np.arange(oiii_5007_n_pars['center'].value - 10000.0, 
+                                   oiii_5007_n_pars['center'].value + 10000.0, 
+                                   dv)
+    
+        oiii_5007_n_xs_wav = doppler2wave(oiii_5007_n_xs*(u.km/u.s), w0) 
+    
+    
+        oiii_5007_n_lum = np.sum(oiii_5007_n_mod.eval(params=oiii_5007_n_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
+                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+    
+        oiii_5007_n_fwhm = oiii_5007_n_pars['sigma'].value * 2.35 
+           
+        oiii_5007_mod = GaussianModel(prefix='oiii_5007_n_') + GaussianModel(prefix='oiii_5007_b_')
+        oiii_5007_pars = oiii_5007_mod.make_params() 
+    
+        oiii_5007_pars['oiii_5007_n_amplitude'].value = out.params['oiii_5007_n_amplitude'].value
+        oiii_5007_pars['oiii_5007_n_sigma'].value = out.params['oiii_5007_n_sigma'].value 
+        oiii_5007_pars['oiii_5007_n_center'].value = out.params['oiii_5007_n_center'].value 
+        oiii_5007_pars['oiii_5007_b_amplitude'].value = out.params['oiii_5007_b_amplitude'].value
+        oiii_5007_pars['oiii_5007_b_sigma'].value = out.params['oiii_5007_b_sigma'].value 
+        oiii_5007_pars['oiii_5007_b_center'].value = out.params['oiii_5007_b_center'].value 
+    
+    
+        flux_line = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
+    
+    
+        if subtract_fe is True:
+
+            flux_bkgd = resid(params=bkgdpars_k, 
+                              x=oiii_5007_n_xs_wav.value, 
+                              model=bkgdmod,
+                              sp_fe=sp_fe)
+    
+        if subtract_fe is False:
+
+            flux_bkgd = resid(params=bkgdpars_k, 
+                              x=oiii_5007_n_xs_wav.value, 
+                              model=bkgdmod)
+    
+        f = (flux_line + flux_bkgd) / flux_bkgd 
+        oiii_5007_eqw = (f[:-1] - 1.0) * np.diff(oiii_5007_n_xs_wav.value)
+        oiii_5007_eqw = np.nansum(oiii_5007_eqw)
+    
+        oiii_5007_lum = np.sum(oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
+                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+    
+        oiii_5007_pdf = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
+        half_max = np.max(oiii_5007_pdf) / 2.0
+    
+        i = 0
+        while oiii_5007_pdf[i] < half_max:
+            i+=1
+    
+        oiii_5007_root1 = oiii_5007_n_xs[i]
+    
+        i = 0
+        while oiii_5007_pdf[-i] < half_max:
+            i+=1
+    
+        oiii_5007_root2 = oiii_5007_n_xs[-i]
+        
+        oiii_5007_fwhm = oiii_5007_root2 - oiii_5007_root1
+
+        # median for blueshift 
+        oiii_5007_norm = np.sum(oiii_5007_pdf * dv)
+        oiii_5007_cdf = np.cumsum(oiii_5007_pdf / oiii_5007_norm)       
+        oiii_5007_blueshift = out.params['oiii_5007_n_center'].value - oiii_5007_n_xs[np.argmin( np.abs(oiii_5007_cdf - 0.5))]
+
+        
+
+
+        #-------------------------------------------------------------------------------------------
+    
+        narrow_fwhm = out.params['oiii_5007_n_sigma'].value * 2.35 
+        narrow_voff = out.params['oiii_5007_n_center'].value  - wave2doppler(5008.239*u.AA, w0).value  
+         
+        if hb_narrow is True:
+    
+            narrow_mod = GaussianModel()
+            narrow_pars = narrow_mod.make_params()
+            narrow_pars['amplitude'].value = out.params['hb_n_amplitude'].value
+            narrow_pars['sigma'].value = out.params['hb_n_sigma'].value 
+            narrow_pars['center'].value = out.params['hb_n_center'].value 
+    
+            narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
+                        (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm
+    
+        
+            #######################################################################
+            """
+            Nicely print out important fitting info
+            """     
+            
+            if verbose: 
+
+                if n_samples == 1:
+    
+                    if out.params['oiii_5007_n_sigma'].vary is True:
+    
+    
+                        print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(out.params['oiii_5007_n_sigma'].value * 2.35, 
+                                                                                                              out.params['oiii_5007_n_sigma'].init_value * 2.35, 
+                                                                                                              out.params['oiii_5007_n_sigma'].min * 2.35, 
+                                                                                                              out.params['oiii_5007_n_sigma'].max * 2.35) 
+                    else:
+                        print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(out.params['oiii_5007_n_sigma'].value * 2.35, 
+                                                                         out.params['oiii_5007_n_sigma'].vary) 
+            
+                    if out.params['oiii_5007_n_center'].vary is True:
+                        print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(out.params['oiii_5007_n_center'].value, 
+                                                                                                                out.params['oiii_5007_n_center'].init_value, 
+                                                                                                                out.params['oiii_5007_n_center'].min, 
+                                                                                                                out.params['oiii_5007_n_center'].max) 
+                    else:
+                        print 'Narrow Center = {0:.1f}, Vary = {1}'.format(out.params['oiii_5007_n_center'].value, 
+                                                                           out.params['oiii_5007_n_center'].vary)     
+    
+        else:
+    
+            narrow_lum = np.nan * (u.erg / u.s)          
+    
+    elif fit_model == 'GaussHermite':
+      
+        narrow_lum = np.nan * (u.erg / u.s)
+        narrow_fwhm = np.nan 
+        narrow_voff = np.nan 
+        oiii_5007_eqw = np.nan 
+        oiii_5007_lum = np.nan * (u.erg / u.s)
+        oiii_5007_n_lum = np.nan * (u.erg / u.s)
+        oiii_5007_b_lum = np.nan * (u.erg / u.s)
+        oiii_5007_fwhm = np.nan 
+        oiii_5007_n_fwhm = np.nan 
+        oiii_5007_b_fwhm = np.nan 
+        oiii_5007_b_voff = np.nan
+        oiii_5007_blueshift = np.nan 
+
+        broad_fwhms = np.repeat(np.nan, 3)
+        broad_cens = np.repeat(np.nan, 3)
+        broad_amps = np.repeat(np.nan, 3)
+
+    elif fit_model == 'MultiGauss':
+
+        broad_fwhms = np.zeros(nGaussians)
+        broad_cens = np.zeros(nGaussians)
+        broad_amps = np.zeros(nGaussians)
+
+        for i in range(nGaussians):   
+            broad_fwhms[i] = np.array(out.params['g{}_fwhm'.format(i)].value)
+            broad_cens[i] = np.array(out.params['g{}_center'.format(i)].value)
+            broad_amps[i] = np.array(out.params['g{}_amplitude'.format(i)].value)
+
+        inds = np.argsort(broad_fwhms)[::-1]
+
+        broad_fwhms = broad_fwhms[inds]
+        broad_cens = broad_cens[inds]
+        broad_amps = broad_amps[inds]
+
+        if len(broad_fwhms) == 1:
+            broad_fwhms = np.append(broad_fwhms, np.nan)
+            broad_cens = np.append(broad_cens, np.nan)
+            broad_amps = np.append(broad_amps, np.nan)
+
+        if len(broad_fwhms) == 2: 
+            broad_fwhms = np.append(broad_fwhms, np.nan)
+            broad_cens = np.append(broad_cens, np.nan)
+            broad_amps = np.append(broad_amps, np.nan)
+
+        narrow_lum = np.nan * (u.erg / u.s)
+        narrow_fwhm = np.nan 
+        narrow_voff = np.nan 
+        oiii_5007_eqw = np.nan 
+        oiii_5007_lum = np.nan * (u.erg / u.s)
+        oiii_5007_n_lum = np.nan * (u.erg / u.s)
+        oiii_5007_b_lum = np.nan * (u.erg / u.s)
+        oiii_5007_fwhm = np.nan 
+        oiii_5007_n_fwhm = np.nan 
+        oiii_5007_b_fwhm = np.nan 
+        oiii_5007_b_voff = np.nan
+        oiii_5007_blueshift = np.nan 
+
+    if fit_model == 'siiv':
+
+
+        broad_fwhm = [np.nan] * 3 
+        narrow_lum = np.nan * (u.erg / u.s)
+        narrow_fwhm = np.nan 
+        narrow_voff = np.nan 
+        oiii_5007_eqw = np.nan 
+        oiii_5007_lum = np.nan * (u.erg / u.s)
+        oiii_5007_n_lum = np.nan * (u.erg / u.s)
+        oiii_5007_b_lum = np.nan * (u.erg / u.s)
+        oiii_5007_fwhm = np.nan 
+        oiii_5007_n_fwhm = np.nan 
+        oiii_5007_b_fwhm = np.nan 
+        oiii_5007_b_voff = np.nan
+        oiii_5007_blueshift = np.nan 
+
+
+
+
+    fit_out = {'name':plot_title, 
+               'fwhm':(root2 - root1)*xscale,
+               'fwhm_1':broad_fwhms[0],
+               'fwhm_2':broad_fwhms[1],
+               'fwhm_3':broad_fwhms[2],
+               'sigma': sd*xscale,
+               'median': md*xscale,
+               'cen': func_center*xscale,
+               'cen_1':broad_cens[0],
+               'cen_2':broad_cens[1],
+               'cen_3':broad_cens[2],
+               'eqw': eqw,
+               'broad_lum':np.log10(broad_lum.value),
+               'peak':peak_flux, 
+               'amplitude_1':broad_amps[0],
+               'amplitude_2':broad_amps[1],
+               'amplitude_3':broad_amps[2],
+               'narrow_fwhm':narrow_fwhm,
+               'narrow_lum':np.log10(narrow_lum.value) if ~np.isnan(narrow_lum.value) else np.nan,
+               'narrow_voff':narrow_voff, 
+               'oiii_5007_eqw':oiii_5007_eqw,
+               'oiii_5007_lum':np.log10(oiii_5007_lum.value) if ~np.isnan(oiii_5007_lum.value) else np.nan,
+               'oiii_5007_n_lum':np.log10(oiii_5007_n_lum.value) if ~np.isnan(oiii_5007_n_lum.value) else np.nan,
+               'oiii_5007_b_lum':np.log10(oiii_5007_b_lum.value) if ~np.isnan(oiii_5007_b_lum.value) else np.nan,
+               'oiii_fwhm':oiii_5007_fwhm,
+               'oiii_n_fwhm':oiii_5007_n_fwhm,
+               'oiii_b_fwhm':oiii_5007_b_fwhm,
+               'oiii_5007_b_voff':oiii_5007_b_voff,
+               'oiii_5007_blueshift':oiii_5007_blueshift, 
+               'redchi':out.redchi,
+               'snr':snr_k,
+               'dv':spec_dv, 
+               'monolum':np.log10(mono_lum_k),
+               'fe_ew':eqw_fe_k}
+    
+    if n_samples == 1: 
+
+        if verbose:
+
+            print '\n'
+            print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum_k)) 
+            print '\n'
+        
+    
+            print  fit_out['name'] + '\n'\
+                  'Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm']), \
+                  'Narrow Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_1']), \
+                  'Very Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_2']), \
+                  'Broad sigma: {0:.2f} km/s \n'.format(fit_out['sigma']), \
+                  'Broad median: {0:.2f} km/s \n'.format(fit_out['median']), \
+                  'Broad centroid: {0:.2f} km/s \n'.format(fit_out['cen']), \
+                  'Broad EQW: {0:.2f} A \n'.format(fit_out['eqw']), \
+                  'Broad luminosity {0:.2f} erg/s \n'.format(fit_out['broad_lum']), \
+                  'Broad peak {0:.2e} erg/s \n'.format(fit_out['peak']), \
+                  'Narrow FWHM: {0:.2f} km/s \n'.format(fit_out['narrow_fwhm']), \
+                  'Narrow luminosity: {0:.2f} km/s \n'.format(fit_out['narrow_lum']), \
+                  'Narrow velocity: {0:.2f} km/s \n'.format(fit_out['narrow_voff']), \
+                  'OIII5007 EQW: {0:.2f} A \n'.format(fit_out['oiii_5007_eqw']),\
+                  'OIII5007 luminosity {0:.2f} erg/s \n'.format(fit_out['oiii_5007_lum']),\
+                  'OIII5007 narrow luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_n_lum']),\
+                  'OIII5007 broad luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_b_lum']),\
+                  'OIII5007 FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_fwhm']),\
+                  'OIII5007 narrow FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_n_fwhm']),\
+                  'OIII5007 broad FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_b_fwhm']),\
+                  'OIII5007 broad velocity: {0:.2f} km/s \n'.format(fit_out['oiii_5007_b_voff']),\
+                  'OIII5007 blueshift: {0:.2f} km/s \n'.format(fit_out['oiii_5007_blueshift']),\
+                  'Reduced chi-squared: {0:.2f} \n'.format(fit_out['redchi']),\
+                  'S/N: {0:.2f} \n'.format(fit_out['snr']), \
+                  'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
+                  'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])
+    
+            if emission_line == 'Hb':
+
+                print fit_out['name'] + ',',\
+                format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+                format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
+                format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
+                format(fit_out['fwhm_3'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_3']) else ',',\
+                format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
+                format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
+                format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
+                format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
+                format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+                format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
+                format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
+                format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
+                format(fit_out['oiii_5007_eqw'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_eqw']) else ',',\
+                format(fit_out['oiii_5007_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_lum']) else ',',\
+                format(fit_out['oiii_5007_n_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_n_lum']) else ',',\
+                format(fit_out['oiii_5007_b_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_lum']) else ',',\
+                format(fit_out['oiii_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_fwhm']) else ',',\
+                format(fit_out['oiii_n_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_n_fwhm']) else ',',\
+                format(fit_out['oiii_b_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_b_fwhm']) else ',',\
+                format(fit_out['oiii_5007_b_voff'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_voff']) else ',',\
+                format(fit_out['oiii_5007_blueshift'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_blueshift']) else ',',\
+                format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
+
+
+                # print  fit_out['name'] + ','\
+                #       '{0:.2f},'.format(fit_out['fwhm']), \
+                #       '{0:.2f},'.format(fit_out['sigma']), \
+                #       '{0:.2f},'.format(fit_out['median']), \
+                #       '{0:.2f},'.format(fit_out['cen']), \
+                #       '{0:.2f},'.format(fit_out['eqw']), \
+                #       '{0:.2f},'.format(fit_out['broad_lum']), \
+                #       '{0:.2f},'.format(fit_out['narrow_fwhm']), \
+                #       '{0:.2f},'.format(fit_out['narrow_lum']), \
+                #       '{0:.2f},'.format(fit_out['narrow_voff']), \
+                #       '{0:.2f},'.format(fit_out['oiii_5007_eqw']),\
+                #       '{0:.2f},'.format(fit_out['oiii_5007_lum']),\
+                #       '{0:.2f},'.format(fit_out['oiii_5007_n_lum']),\
+                #       '{0:.2f},'.format(fit_out['oiii_5007_b_lum']),\
+                #       '{0:.2f},'.format(fit_out['oiii_fwhm']),\
+                #       '{0:.2f},'.format(fit_out['oiii_n_fwhm']),\
+                #       '{0:.2f},'.format(fit_out['oiii_b_fwhm']),\
+                #       '{0:.2f},'.format(fit_out['oiii_5007_b_voff']),\
+                #       '{0:.2f}'.format(fit_out['redchi'])          
+    
+
+            elif emission_line == 'Ha':
+
+                print fit_out['name'] + ',',\
+                format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+                format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
+                format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
+                format(fit_out['fwhm_3'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_3']) else ',',\
+                format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
+                format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
+                format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
+                format(fit_out['cen_1'], '.2f') + ',' if ~np.isnan(fit_out['cen_1']) else ',',\
+                format(fit_out['cen_2'], '.2f') + ',' if ~np.isnan(fit_out['cen_2']) else ',',\
+                format(fit_out['cen_3'], '.2f') + ',' if ~np.isnan(fit_out['cen_3']) else ',',\
+                format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
+                format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+                format(fit_out['amplitude_1'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_1']) else ',',\
+                format(fit_out['amplitude_2'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_2']) else ',',\
+                format(fit_out['amplitude_3'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_3']) else ',',\
+                format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
+                format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
+                format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
+                format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
+
+            else: 
+
+                print fit_out['name'] + ',',\
+                format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+                format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
+                format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
+                format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
+                format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
+                format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+                format(fit_out['peak'], '.2e') + ',' if ~np.isnan(fit_out['peak']) else ',',\
+                format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
+
+    
+    
+        if save_dir is not None:
+    
+            with open(os.path.join(save_dir, 'fit.txt'), 'a') as f:
+
+                f.write('\n \n')
+                f.write('Peak: {0:.2f} km/s \n'.format(func_center))
+                f.write('FWHM: {0:.2f} km/s \n'.format(root2 - root1))
+                f.write('Median: {0:.2f} km/s \n'.format(md))
+                f.write('Sigma: {0:.2f} km/s \n'.format(sd))
+                f.write('Reduced chi-squared: {0:.2f} \n'.format(out.redchi))
+                f.write('EQW: {0:.2f} A \n'.format(eqw))      
+    
+            my_line_props = line_props(plot_title, func_center, root2 - root1, md, sd, out.redchi, eqw)  
+            param_file = os.path.join(save_dir, 'line_props.txt')
+            parfile = open(param_file, 'w')
+            pickle.dump(my_line_props, parfile, -1)
+            parfile.close()
+          
+    
+    
+        if plot is True:
+    
+            if subtract_fe is True:
+                flux_plot = flux - resid(params=bkgdpars_k, 
+                                         x=wav.value, 
+                                         model=bkgdmod,
+                                         sp_fe=sp_fe)
+            
+            if subtract_fe is False:
+                flux_plot = flux - resid(params=bkgdpars_k, 
+                                         x=wav.value, 
+                                         model=bkgdmod)
+    
+            plot_fit(wav=wav,
+                     flux = flux_plot,
+                     err=err,
+                     pars=out.params,
+                     mod=mod,
+                     out=out,
+                     plot_savefig = plot_savefig,
+                     save_dir = save_dir,
+                     maskout = maskout,
+                     z=z,
+                     w0=w0,
+                     continuum_region=continuum_region,
+                     fitting_region=fitting_region,
+                     plot_region=plot_region,
+                     plot_title=plot_title,
+                     line_region=line_region,
+                     mask_negflux = mask_negflux,
+                     fit_model=fit_model,
+                     hb_narrow=hb_narrow,
+                     verbose=verbose,
+                     reject_outliers=reject_outliers,  
+                     reject_width=reject_width,
+                     reject_sigma=reject_sigma,
+                     gh_order = gh_order,
+                     xscale=xscale)
+    
+            plot_fit_d3(wav=wav,
+                        flux = flux_plot,
+                        err=err,
+                        pars=out.params,
+                        mod=mod,
+                        out=out,
+                        plot_savefig = plot_savefig,
+                        save_dir = save_dir,
+                        maskout = maskout,
+                        z=z,
+                        w0=w0,
+                        continuum_region=continuum_region,
+                        fitting_region=fitting_region,
+                        plot_region=plot_region,
+                        plot_title=plot_title,
+                        line_region=line_region,
+                        mask_negflux = mask_negflux,
+                        fit_model=fit_model,
+                        hb_narrow=hb_narrow,
+                        verbose=verbose,
+                        xscale=xscale,
+                        gh_order=gh_order)
+        
+
+    else:
+
+        print plot_title, k
+    
+    return fit_out 
+
+        
+
 
 def fit_line(wav,
              dw,
@@ -1438,7 +3428,11 @@ def fit_line(wav,
              reject_sigma = 3.0,
              n_samples=1,
              emission_line='Ha',
-             pseudo_continuum_fit=False):
+             pseudo_continuum_fit=False,
+             parallel=False,
+             cores=8,
+             fix_broad_peaks=False,
+             oiii_broad_off=False):
 
 
     """
@@ -1462,20 +3456,25 @@ def fit_line(wav,
                 os.makedirs(save_dir)
 
             if emission_line == 'Ha':
-                columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'redchi', 'monolum'] 
+                columns = ['fwhm', 'fwhm_1', 'fwhm_2', 'fwhm_3', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'redchi', 'snr', 'monolum', 'fe_ew'] 
                 
             if emission_line == 'Hb':
-                columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'oiii_5007_eqw', 'oiii_5007_lum', 'oiii_5007_n_lum', 'oiii_5007_b_lum', 'oiii_fwhm', 'oiii_n_fwhm', 'oiii_b_fwhm', 'oiii_5007_b_voff', 'redchi', 'monolum', 'fe_ew']
+                columns = ['fwhm', 'fwhm_1', 'fwhm_2', 'fwhm_3', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'oiii_5007_eqw', 'oiii_5007_lum', 'oiii_5007_n_lum', 'oiii_5007_b_lum', 'oiii_fwhm', 'oiii_n_fwhm', 'oiii_b_fwhm', 'oiii_5007_b_voff', 'oiii_5007_blueshift', 'redchi', 'snr', 'monolum', 'fe_ew']
                 
             if emission_line == 'CIV':
-                columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'redchi', 'monolum']
+                columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'redchi', 'snr', 'monolum']
 
             if pseudo_continuum_fit:
                 columns = ['monolum', 'fe_ew']
 
+            if emission_line == 'siiv':
+                columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'redchi', 'snr']
+
+
             index = np.arange(n_samples)
 
             df_out = pd.DataFrame(index=index, columns=columns)     
+
 
     home_dir = expanduser("~")
 
@@ -1519,12 +3518,18 @@ def fit_line(wav,
                        'sigma':np.nan,
                        'median':np.nan,
                        'cen':np.nan,
+                       'cen_1':np.nan,
+                       'cen_2':np.nan,
+                       'cen_3':np.nan,
                        'eqw':np.nan,
                        'broad_lum':np.nan,
-                       'peak':np.nan,
+                       'peak':np.nan, 
+                       'amplitude_1':np.nan,
+                       'amplitude_2':np.nan,
+                       'amplitude_3':np.nan,
                        'narrow_fwhm':np.nan,
                        'narrow_lum':np.nan,
-                       'narrow_voff':np.nan,
+                       'narrow_voff':np.nan, 
                        'oiii_5007_eqw':np.nan,
                        'oiii_5007_lum':np.nan,
                        'oiii_5007_n_lum':np.nan,
@@ -1533,9 +3538,10 @@ def fit_line(wav,
                        'oiii_n_fwhm':np.nan,
                        'oiii_b_fwhm':np.nan,
                        'oiii_5007_b_voff':np.nan,
+                       'oiii_5007_blueshift':np.nan,
                        'redchi':np.nan,
                        'snr':np.nan,
-                       'dv':np.nan*(u.km/u.s),
+                       'dv':np.nan, 
                        'monolum':np.nan,
                        'fe_ew':np.nan}
             
@@ -1575,10 +3581,22 @@ def fit_line(wav,
 
     if n_samples > 1: 
 
+        # print 'Warning loading flux array!'
         flux_array = np.asarray(np.random.normal(flux,
                                                  err,
                                                  size=(n_samples, n_elements)),
                                 dtype=np.float32)
+
+        # f = os.path.join(save_dir, 'flux_array.pickle')
+        # p = open(f, 'wb')
+        # pickle.dump(flux_array, p, -1)
+        # p.close()
+
+        # f = os.path.join(save_dir, 'flux_array.pickle')
+        # p = open(f, 'rb')
+        # flux_array = pickle.load(p)
+        # p.close()
+
 
         # Can't draw from normal distribution with sigma = 0.0
         # These pixels should be masked in the fit so won't matter. 
@@ -1800,16 +3818,22 @@ def fit_line(wav,
                        'fwhm':np.nan,
                        'fwhm_1':np.nan,
                        'fwhm_2':np.nan,
-                       'fwhm_3':np.nan,                       
+                       'fwhm_3':np.nan,
                        'sigma':np.nan,
                        'median':np.nan,
                        'cen':np.nan,
+                       'cen_1':np.nan,
+                       'cen_2':np.nan,
+                       'cen_3':np.nan,
                        'eqw':np.nan,
                        'broad_lum':np.nan,
-                       'peak':np.nan,
+                       'peak':np.nan, 
+                       'amplitude_1':np.nan,
+                       'amplitude_2':np.nan,
+                       'amplitude_3':np.nan,
                        'narrow_fwhm':np.nan,
                        'narrow_lum':np.nan,
-                       'narrow_voff':np.nan,
+                       'narrow_voff':np.nan, 
                        'oiii_5007_eqw':np.nan,
                        'oiii_5007_lum':np.nan,
                        'oiii_5007_n_lum':np.nan,
@@ -1818,9 +3842,10 @@ def fit_line(wav,
                        'oiii_n_fwhm':np.nan,
                        'oiii_b_fwhm':np.nan,
                        'oiii_5007_b_voff':np.nan,
+                       'oiii_5007_blueshift':np.nan,
                        'redchi':np.nan,
                        'snr':np.nan,
-                       'dv':np.nan*(u.km/u.s),
+                       'dv':np.nan, 
                        'monolum':np.nan,
                        'fe_ew':np.nan}
             
@@ -1890,61 +3915,95 @@ def fit_line(wav,
 
         elif subtract_fe is False:
 
-            bkgdmod = Model(PLModel, 
-                            param_names=['amplitude','exponent'], 
-                            independent_vars=['x']) 
+            #-------------------------------------------------------------------------------------------------
+            
+            fitobj = []
+            for k in range(n_samples):
+                fitobj.append([k, xdat_cont[k], ydat_cont[k], flux_array_fit[k, :], flux_array_plot[k, :], wav_array_fit[k, :], wav_array_plot[k, :]])
 
-            bkgdpars = bkgdmod.make_params()
+            fit1_p = partial(fit1, 
+                             n_samples = n_samples, 
+                             plot_title = plot_title, 
+                             verbose = verbose, 
+                             mono_lum_wav = mono_lum_wav, 
+                             spec_norm = spec_norm, 
+                             z = z)
 
-            for k, (x, y) in enumerate(zip(xdat_cont, ydat_cont)):
+            mono_lum, eqw_fe = np.zeros(n_samples), np.zeros(n_samples) 
+            bkgdpars = []
 
-                if n_samples > 1: 
-                    print plot_title, k 
-
-                bkgdpars['exponent'].value = 1.0
-                bkgdpars['amplitude'].value = 1.0 
+            if parallel:
                 
-                out = minimize(resid,
-                               bkgdpars,
-                               kws={'x':x, 
-                                    'model':bkgdmod, 
-                                    'data':y},
-                               method='leastsq')
+                p = Pool(cores)
+                out = p.map(fit1_p, fitobj)
+                p.close() 
+                p.join()
 
-                flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] = flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])]).value, model=bkgdmod)
-                flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] = flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])]).value, model=bkgdmod)                  
-
-                if verbose:
-                    if n_samples == 1:
-                        print out.message  
-                        print fit_report(bkgdpars)
-
-                ####################################################################################################################
-                """
-                Calculate flux at wavelength mono_lum_wav
-                """
-                # Calculate just power-law continuum (no Fe)
-                cont_mod = Model(PLModel, 
-                                 param_names=['amplitude','exponent'], 
-                                 independent_vars=['x']) 
-
-                cont_pars = cont_mod.make_params()
-                cont_pars['exponent'].value = bkgdpars['exponent'].value
-                cont_pars['amplitude'].value = bkgdpars['amplitude'].value  
-
-                mono_flux = resid(params=cont_pars, 
-                                  x=[mono_lum_wav.value], 
-                                  model=cont_mod)[0]
+            else:
                 
-                mono_flux = mono_flux / spec_norm
-                mono_flux = mono_flux * (u.erg / u.cm / u.cm / u.s / u.AA)
-                lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
+                out = map(fit1_p, fitobj)
 
-                mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav
+            for k, o in enumerate(out):
 
-                eqw_fe = 0.0 
+                flux_array_fit[k, :] = o[0]
+                flux_array_plot[k, :] = o[1]
+                mono_lum[k] = o[2].value
+                eqw_fe[k] = o[3]
+                bkgdpars.append(o[4])
 
-                ######################################################################################################################
+            
+            # mono_lum, eqw_fe = np.zeros(n_samples), np.zeros(n_samples)
+            # for k, (x, y) in enumerate(zip(xdat_cont, ydat_cont)):
+
+            #     if n_samples > 1: 
+            #         print plot_title, k 
+
+            #     bkgdpars['exponent'].value = 1.0
+            #     bkgdpars['amplitude'].value = 1.0 
+                
+            #     out = minimize(resid,
+            #                    bkgdpars,
+            #                    kws={'x':x, 
+            #                         'model':bkgdmod, 
+            #                         'data':y},
+            #                    method='leastsq')
+
+            #     flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] = flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])]).value, model=bkgdmod)
+            #     flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] = flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])]).value, model=bkgdmod)                  
+
+            #     if verbose:
+            #         if n_samples == 1:
+            #             print out.message  
+            #             print fit_report(bkgdpars)
+
+            #     ####################################################################################################################
+            #     """
+            #     Calculate flux at wavelength mono_lum_wav
+            #     """
+            #     # Calculate just power-law continuum (no Fe)
+            #     cont_mod = Model(PLModel, 
+            #                      param_names=['amplitude','exponent'], 
+            #                      independent_vars=['x']) 
+
+            #     cont_pars = cont_mod.make_params()
+            #     cont_pars['exponent'].value = bkgdpars['exponent'].value
+            #     cont_pars['amplitude'].value = bkgdpars['amplitude'].value  
+
+            #     mono_flux = resid(params=cont_pars, 
+            #                       x=[mono_lum_wav.value], 
+            #                       model=cont_mod)[0]
+                
+            #     mono_flux = mono_flux / spec_norm
+            #     mono_flux = mono_flux * (u.erg / u.cm / u.cm / u.s / u.AA)
+            #     lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
+
+            #     mono_lum[k] =  (mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav).value
+
+            #     eqw_fe[k] = 0.0 
+
+            # #     ######################################################################################################################
+
+            #     #----------------------------------------------------------------------------------------------------------------------
     
     if bkgd_median is False:
 
@@ -1953,862 +4012,59 @@ def fit_line(wav,
         ydat_cont = ma.concatenate((flux_array_blue, flux_array_red), axis=1)
         yerr_cont = ma.concatenate((err_array_blue, err_array_red), axis=1)
 
+        fitobj = []
 
-        # print xdat_cont
-        if subtract_fe is True:
+        for k in range(n_samples):
+            fitobj.append([k, xdat_cont[k], ydat_cont[k], yerr_cont[k], flux_array_fit[k, :], flux_array_plot[k, :], wav_array_fit[k, :], wav_array_plot[k, :]])
 
-            ################################################################################
-            """
-            Optical FeII template
-        
-            Broaden by convolution with Gaussian using astropy 
-            Add to power-law with normalisation
-            Allow shifting as well?
-        
-            Shen does all fits in logarithmic wavelength space. 
-            Does this make a difference? 
-        
-            Convolve with width of Balmer line - might have to do iteratively 
-        
-            Either use FWHM from fit to Ha or leave convolution as a free paramter 
-            See how this compares. 
-            """
+        fit2_p = partial(fit2, 
+                         n_samples = n_samples, 
+                         subtract_fe = subtract_fe, 
+                         home_dir = home_dir, 
+                         fe_FWHM = fe_FWHM, 
+                         fe_FWHM_vary = fe_FWHM_vary, 
+                         spec_norm = spec_norm, 
+                         mono_lum_wav = mono_lum_wav, 
+                         z = z,
+                         wav = wav, 
+                         flux = flux, 
+                         err = err, 
+                         verbose = verbose, 
+                         wav_array_blue = wav_array_blue, 
+                         flux_array_blue = flux_array_blue, 
+                         wav_array_red = wav_array_red, 
+                         flux_array_red = flux_array_red, 
+                         reject_outliers = reject_outliers, 
+                         w0 = w0, 
+                         maskout = maskout, 
+                         continuum_region = continuum_region,
+                         plot_title = plot_title,
+                         plot = plot) 
 
-            fname = os.path.join(home_dir,'SpectraTools/irontemplate.dat')
-            fe_wav, fe_flux = np.genfromtxt(fname, unpack=True)
-        
-            fe_flux = fe_flux / np.median(fe_flux)
-    
-            sp_fe = spec.Spectrum(wa=10**fe_wav, fl=fe_flux)
 
-            bkgdmod = Model(PseudoContinuum, 
-                            param_names=['amplitude',
-                                         'exponent',
-                                         'fe_norm',
-                                         'fe_sd',
-                                         'fe_shift'], 
-                            independent_vars=['x']) 
+
+        mono_lum, eqw_fe = np.zeros(n_samples), np.zeros(n_samples) 
+        bkgdpars = []
+
+        if parallel:
             
-            bkgdpars = bkgdmod.make_params() 
-            
-            fe_sigma = fe_FWHM / 2.35 
-            fe_pix = fe_sigma / (sp_fe.dv * (u.km/u.s))
-
-            bkgdpars['fe_sd'].vary = fe_FWHM_vary
-
-            bkgdpars['fe_norm'].min = 0.0
-            bkgdpars['fe_sd'].min = 2000.0 / 2.35 / sp_fe.dv
-            bkgdpars['fe_sd'].max = 12000.0 / 2.35 / sp_fe.dv
-
-            bkgdpars['fe_shift'].min = -20.0
-            bkgdpars['fe_shift'].max = 20.0
-
-            # I think that constraining the power-law slope to be negative
-            # helps break some of the degeneracy between the fe template
-            # and the continuum. I don't want to change any of my fits
-            # so for now just do this for the pseudo-continuum fit. 
-
-            # Seems to break if max is set to 0.0
-
-            # if pseudo_continuum_fit:
-
-            #     bkgdpars['exponent'].max = 0.5 
-
-
-        if subtract_fe is False:
-
-            bkgdmod = Model(PLModel, 
-                            param_names=['amplitude','exponent'], 
-                            independent_vars=['x']) 
-
-            bkgdpars = bkgdmod.make_params()
-            
-
-        for k, (x, y, er) in enumerate(zip(xdat_cont, ydat_cont, yerr_cont)):
-            
-            if n_samples > 1: 
-                print plot_title, k 
-
-            if len(ma.getdata(x[~ma.getmaskarray(x)]).value) == 0: 
-                if verbose:
-                    print 'No flux in continuum region'
-
-            if subtract_fe is True:
-
-                bkgdpars['fe_sd'].value = fe_pix.value  
-                bkgdpars['exponent'].value = -1.0
-                bkgdpars['amplitude'].value = 1.0
-                bkgdpars['fe_norm'].value = 0.05 
-                bkgdpars['fe_shift'].value = 0.0
-
-                # print bkgdpars['fe_sd'].value * 2.35 * sp_fe.dv 
-
-                out = minimize(resid,
-                               bkgdpars,
-                               kws={'x':ma.getdata(x[~ma.getmaskarray(x)]).value, 
-                                    'model':bkgdmod, 
-                                    'data':ma.getdata(y[~ma.getmaskarray(y)]), 
-                                    'sigma':ma.getdata(er[~ma.getmaskarray(er)]), 
-                                    'sp_fe':sp_fe},
-                               method='slsqp')  
-
-                flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] = flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])]).value, model=bkgdmod, sp_fe=sp_fe)
-                flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] = flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])]).value, model=bkgdmod, sp_fe=sp_fe)                  
-
-            
-                ##############################################################################
-                """
-                Calculate EQW of Fe between 4435 and 4684A - same as Shen (2016)
-                """
-                fe_fl = PseudoContinuum(np.arange(4434,4684,1), 
-                                        0.0,
-                                        0.0,
-                                        bkgdpars['fe_norm'].value,
-                                        bkgdpars['fe_sd'].value,
-                                        bkgdpars['fe_shift'].value,
-                                        sp_fe)
-
-                fe_fl = fe_fl / spec_norm 
-                fe_fl = fe_fl * (u.erg / u.cm / u.cm / u.s / u.AA) 
-
-                bg_fl = PseudoContinuum(np.arange(4434,4684,1), 
-                                        bkgdpars['amplitude'].value,
-                                        bkgdpars['exponent'].value,
-                                        0.0,
-                                        bkgdpars['fe_sd'].value,
-                                        bkgdpars['fe_shift'].value,
-                                        sp_fe)      
-
-                bg_fl = bg_fl / spec_norm 
-                bg_fl = bg_fl * (u.erg / u.cm / u.cm / u.s / u.AA) 
-    
-                f = (fe_fl + bg_fl) / bg_fl
-                eqw_fe = (f[:-1] - 1.0) * 1.0
-                eqw_fe = np.nansum(eqw_fe)
-
-                if verbose:
-                    print 'Fe EW: {}'.format(eqw_fe)  
-
-
-
-                ###############################################################################
-
-
-
-            if subtract_fe is False:
-
-
-                bkgdpars['exponent'].value = 1.0
-                bkgdpars['amplitude'].value = 1.0 
-
-                out = minimize(resid,
-                               bkgdpars,
-                               kws={'x':ma.getdata(x[~ma.getmaskarray(x)]).value, 
-                                    'model':bkgdmod, 
-                                    'data':ma.getdata(y[~ma.getmaskarray(y)]),
-                                    'sigma':ma.getdata(er[~ma.getmaskarray(er)])},  
-                               method='leastsq') 
-
-
-                flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] = flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])]).value, model=bkgdmod)
-                flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] = flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])]).value, model=bkgdmod)                  
-            
-                eqw_fe = 0.0
-
-            ####################################################################################################################
-            """
-            Calculate flux at wavelength mono_lum_wav
-            """
-
-            # Calculate just power-law continuum (no Fe)
-            cont_mod = Model(PLModel, 
-                             param_names=['amplitude','exponent'], 
-                             independent_vars=['x']) 
-
-            cont_pars = cont_mod.make_params()
-            cont_pars['exponent'].value = bkgdpars['exponent'].value
-            cont_pars['amplitude'].value = bkgdpars['amplitude'].value  
-
-            mono_flux = resid(params=cont_pars, 
-                              x=[mono_lum_wav.value], 
-                              model=cont_mod)[0]
-
-            
-            mono_flux = mono_flux / spec_norm
-
-            mono_flux = mono_flux * (u.erg / u.cm / u.cm / u.s / u.AA)
-
-            lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
-
-            mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav
-
-
-            ######################################################################################################################
-
-            if pseudo_continuum_fit:
-    
-                fit_out = {'name':plot_title,
-                           'monolum':np.log10(mono_lum.value),
-                           'fe_ew':eqw_fe} 
-        
-            if n_samples == 1:  
-
-                if verbose:
-
-                    print out.message, 'chi-squared = {}'.format(out.redchi)
-                    print fit_report(bkgdpars)
-      
-                    if subtract_fe is True:
-                        print 'Fe FWHM = {0:.1f} km/s (initial = {1:.1f} km/s)'.format(bkgdpars['fe_sd'].value * 2.35 * sp_fe.dv, bkgdpars['fe_sd'].init_value * 2.35 * sp_fe.dv)            
-                
-
-                if plot:
-           
-                    """
-                    Plotting continuum / iron fit
-                    """
-
-                    xdat_cont_plot = ma.getdata(xdat_cont[~ma.getmaskarray(xdat_cont)]).value
-                    ydat_cont_plot = ma.getdata(ydat_cont[~ma.getmaskarray(ydat_cont)])
-                    yerr_cont_plot = ma.getdata(yerr_cont[~ma.getmaskarray(yerr_cont)])
-            
-                    fig, axs = plt.subplots(4, 1, figsize=(20,20))
-        
-                    axs[0].errorbar(wav.value, 
-                                    flux, 
-                                    yerr=err, 
-                                    linestyle='', 
-                                    alpha=0.5,
-                                    color='grey')
-        
-                    axs[1].errorbar(wav.value, 
-                                    median_filter(flux,51), 
-                                    color='grey')
-            
-                    xdat_plotting = np.arange(xdat_cont_plot.min(), xdat_cont_plot.max(), 1)
-
-                    if subtract_fe is True: 
-            
-                        axs[0].plot(xdat_plotting, 
-                                    resid(params=bkgdpars, 
-                                          x=xdat_plotting, 
-                                          model=bkgdmod, 
-                                          sp_fe=sp_fe), 
-                                    color='black', 
-                                    lw=2)
-                
-                        axs[1].plot(xdat_plotting, 
-                                    resid(params=bkgdpars, 
-                                          x=xdat_plotting, 
-                                          model=bkgdmod, 
-                                          sp_fe=sp_fe), 
-                                    color='black', 
-                                    lw=2)
-                
-                        gauss = Gaussian1DKernel(stddev=bkgdpars['fe_sd'].value) 
-            
-                        fe_flux = convolve(sp_fe.fl, gauss)
-                        fe_flux = np.roll(fe_flux, int(bkgdpars['fe_shift'].value))
-                        f = interp1d(sp_fe.wa, fe_flux) 
-                        fe_flux = f(xdat_cont_plot)   
-    
-                        axs[0].plot(xdat_cont_plot, 
-                                    bkgdpars['fe_norm'].value * fe_flux, 
-                                    color='red')   
-
-                        
-                        amp = bkgdpars['amplitude'].value * 5000.0**(-bkgdpars['exponent'].value)    
-                        
-                        axs[0].plot(xdat_cont_plot, 
-                                    amp*xdat_cont_plot**bkgdpars['exponent'].value, 
-                                    color='blue')   
-
-
-                        fe_flux = np.roll(sp_fe.fl, int(bkgdpars['fe_shift'].value))
-                       
-                        axs[1].plot(sp_fe.wa, 
-                                    bkgdpars['fe_norm'].value * fe_flux, 
-                                    color='red')  
-
-
-                    if subtract_fe is False: 
-
-                        axs[0].plot(xdat_plotting, 
-                                    resid(params=bkgdpars, 
-                                          x=xdat_plotting, 
-                                          model=bkgdmod), 
-                                    color='black', 
-                                    lw=2)
-                
-                        axs[1].plot(xdat_plotting, 
-                                    resid(params=bkgdpars, 
-                                          x=xdat_plotting, 
-                                          model=bkgdmod),
-                                    color='black', 
-                                    lw=2)
- 
-                        bkgdpars_tmp = bkgdpars.copy() 
-
-
-                        axs[1].plot(xdat_plotting, 
-                                    resid(params=bkgdpars, 
-                                          x=xdat_plotting, 
-                                          model=bkgdmod),
-                                    color='black', 
-                                    lw=2)
-                    
-
-            
-                    axs[0].set_xlim(xdat_cont_plot.min() - 50.0, xdat_cont_plot.max() + 50.0)
-                    axs[1].set_xlim(axs[0].get_xlim())
-
-                    if subtract_fe is True: 
-                    
-                        func_vals = resid(params=bkgdpars, 
-                                          x=xdat_cont_plot, 
-                                          model=bkgdmod, 
-                                          sp_fe=sp_fe)
-
-                    if subtract_fe is False: 
-
-                        func_vals = resid(params=bkgdpars, 
-                                          x=xdat_cont_plot, 
-                                          model=bkgdmod)
-            
-                    axs[0].set_ylim(np.median(ydat_cont_plot) - 3.0*np.std(ydat_cont_plot), np.median(ydat_cont_plot) + 3.0*np.std(ydat_cont_plot))
-                    axs[1].set_ylim(axs[0].get_ylim())
-                    
-                    xdat_masking = np.arange(wav.min().value, wav.max().value, 0.05)*(u.AA)
-                    vdat_masking = wave2doppler(xdat_masking, w0)
-                    
-                    mask = (xdat_masking.value < continuum_region[0][0].value) | \
-                           ((xdat_masking.value > continuum_region[0][1].value) &  (xdat_masking.value < continuum_region[1][0].value))  | \
-                           (xdat_masking.value > continuum_region[1][1].value)
-                    
-                    if maskout is not None:
-                        for item in maskout:
-                            mask = mask | ((vdat_masking.value > item.value[0]) & (vdat_masking.value < item.value[1]))
-                    
-                    vdat1_masking = ma.array(vdat_masking.value)
-                    vdat1_masking[mask] = ma.masked 
-            
-                    for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
-                    
-                        axs[0].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
-                                   doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
-                                   alpha=0.4, 
-                                   color='powderblue')    
-                  
-                        axs[1].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
-                                   doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
-                                   alpha=0.4, 
-                                   color='powderblue')    
-                   
-                        axs[2].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
-                                   doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
-                                   alpha=0.4, 
-                                   color='powderblue')    
-                    
-                        axs[3].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
-                                   doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
-                                   alpha=0.4, 
-                                   color='powderblue')    
-        
-                    if subtract_fe is True: 
-                    
-                        axs[2].scatter(xdat_cont_plot, 
-                                      (ydat_cont_plot - resid(params=bkgdpars, 
-                                                              x=xdat_cont_plot, 
-                                                              model=bkgdmod, 
-                                                              sp_fe=sp_fe)) / yerr_cont_plot, 
-                                      edgecolor='None', 
-                                      s=15, 
-                                      facecolor='black')
-
-                    if subtract_fe is False: 
-
-                        axs[2].scatter(xdat_cont_plot, 
-                                      (ydat_cont_plot - resid(params=bkgdpars, 
-                                                              x=xdat_cont_plot, 
-                                                              model=bkgdmod)) / yerr_cont_plot, 
-                                      edgecolor='None', 
-                                      s=15, 
-                                      facecolor='black')
-
-                    
-                    axs[2].axhline(0.0, color='black', linestyle='--')
-                    axs[2].set_xlim(axs[0].get_xlim())
-            
-                    axs[3].plot(wav.value, flux, color='grey')
-
-                    if subtract_fe is True:
-                    
-                        axs[3].plot(xdat_cont_plot, 
-                                    resid(params=bkgdpars, 
-                                          x=xdat_cont_plot, 
-                                          model=bkgdmod, 
-                                          sp_fe=sp_fe), 
-                                    color='black', 
-                                    lw=2)
-
-                    if subtract_fe is False: 
-
-                        axs[3].plot(xdat_cont_plot, 
-                                    resid(params=bkgdpars, 
-                                          x=xdat_cont_plot, 
-                                          model=bkgdmod), 
-                                    color='black', 
-                                    lw=2)
-
-                    if reject_outliers: 
-
-                        mask = ma.getmaskarray(wav_array_blue).flatten() 
-            
-                        mask[ma.getdata(wav_array_blue.flatten()).value < continuum_region[0][0].value] = False
-                        mask[ma.getdata(wav_array_blue.flatten()).value > continuum_region[0][1].value] = False
-            
-                        xdat_cont_outliers = ma.masked_where(~mask, ma.getdata(wav_array_blue).flatten())
-                        ydat_cont_outliers = ma.masked_where(~mask, ma.getdata(flux_array_blue).flatten())
-            
-                        axs[0].scatter(xdat_cont_outliers,
-                                       ydat_cont_outliers,
-                                       color='firebrick', 
-                                       s=40, 
-                                       marker='x') 
-            
-                        mask = ma.getmaskarray(wav_array_red).flatten() 
-            
-                        mask[ma.getdata(wav_array_red.flatten()).value < continuum_region[1][0].value] = False
-                        mask[ma.getdata(wav_array_red.flatten()).value > continuum_region[1][1].value] = False
-            
-                        xdat_cont_outliers = ma.masked_where(~mask, ma.getdata(wav_array_red).flatten())
-                        ydat_cont_outliers = ma.masked_where(~mask, ma.getdata(flux_array_red).flatten())
-            
-                        axs[0].scatter(xdat_cont_outliers,
-                                       ydat_cont_outliers,
-                                       color='firebrick', 
-                                       s=40, 
-                                       marker='x') 
-
-                    if verbose:
-            
-                        global coords
-                        coords = [] 
-                        cid = fig.canvas.mpl_connect('button_press_event', lambda x: onclick2(x, w0=w0))
-            
-                        plt.show(1)
-            
-                    plt.close() 
-
-    if pseudo_continuum_fit:
-
-        """
-        Only fitting PseudoContinuum
-        """
-
-        if n_samples == 1:       
-
-            return fit_out
-
-        else: 
-       
-            if save_dir is not None:
-                df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
-
-            return None 
-    
-
-    # Rescale x axis so everything is of order unity.
-    # y axis has already been scaled  
-
-    if fit_model == 'MultiGauss':
-
-        xscale = 1.0 
-
-        # Make model 
-        bkgd = ConstantModel()
-        mod = bkgd
-        pars = bkgd.make_params()
-        
-        # A bit unnessesary, but I need a way to do += in the loop below
-        pars['c'].value = 0.0
-        pars['c'].vary = False
-
-
-        for i in range(nGaussians):
-            gmod = GaussianModel(prefix='g{}_'.format(i))
-            mod += gmod
-            pars += gmod.guess(flux_array_fit[0,~ma.getmaskarray(flux_array_fit[0,:])], x=ma.getdata(vdat_array_fit[0,~ma.getmaskarray(vdat_array_fit[0,:])]).value)
-
-
-               
-        for i in range(nGaussians):
-            pars['g{}_center'.format(i)].value = 0.0
-            pars['g{}_center'.format(i)].min = -2000.0
-            pars['g{}_center'.format(i)].max = 2000.0 
-            pars['g{}_amplitude'.format(i)].min = 0.0
-            # pars['g{}_sigma'.format(i)].min = 1000.0 # sometimes might be better if this is relaxed 
-            # pars['g{}_sigma'.format(i)].max = 10000.0 
-
-        # pars['g0_center'].set(expr='g1_center') 
-
-    elif fit_model == 'GaussHermite':
-
-        # Calculate mean and variance
-
-        """
-        Because p isn't a real probability distribution we sometimes get negative 
-        variances if a lot of the flux is negative. 
-        Therefore confine this to only work on the bit of the 
-        spectrum that is positive
-        """
-
-        ydat = ma.getdata(flux_array_fit[0,~ma.getmaskarray(flux_array_fit[0,:])])
-        vdat = ma.getdata(vdat_array_fit[0,~ma.getmaskarray(vdat_array_fit[0,:])])
-
-
-        p = ydat[ydat > 0.0] / np.sum(ydat[ydat > 0.0])
-        m = np.sum(vdat[ydat > 0.0] * p)
-        v = np.sum(p * (vdat[ydat > 0.0]-m)**2)
-        xscale = np.sqrt(v).value 
-
-        param_names = []
-
-        for i in range(gh_order + 1):
-            
-            param_names.append('amp{}'.format(i))
-            param_names.append('sig{}'.format(i))
-            param_names.append('cen{}'.format(i))
-
-        if gh_order == 0: 
- 
-            mod = Model(gausshermite_0, independent_vars=['x'], param_names=param_names) 
-    
-        if gh_order == 1: 
- 
-            mod = Model(gausshermite_1, independent_vars=['x'], param_names=param_names) 
-     
-        if gh_order == 2: 
- 
-            mod = Model(gausshermite_2, independent_vars=['x'], param_names=param_names) 
-     
-        if gh_order == 3: 
- 
-            mod = Model(gausshermite_3, independent_vars=['x'], param_names=param_names) 
-     
-        if gh_order == 4: 
- 
-            mod = Model(gausshermite_4, independent_vars=['x'], param_names=param_names) 
-     
-        if gh_order == 5: 
- 
-            mod = Model(gausshermite_5, independent_vars=['x'], param_names=param_names) 
-
-        if gh_order == 6: 
- 
-            mod = Model(gausshermite_6, independent_vars=['x'], param_names=param_names) 
-
-        pars = mod.make_params()
-
-        for i in range(gh_order + 1):
-
-            pars['amp{}'.format(i)].value = 1.0
-            pars['sig{}'.format(i)].value = 1.0
-            pars['cen{}'.format(i)].value = 0.0
- 
-            # remember that wav_fitting_array mask includes the background windows, 
-            # so don't use this 
-            # already converted fitting_region in to units of wavelength. 
-
-            pars['cen{}'.format(i)].min = wave2doppler(fitting_region[0], w0).value / xscale
-            pars['cen{}'.format(i)].max = wave2doppler(fitting_region[1], w0).value / xscale
-
-            pars['sig{}'.format(i)].min = 0.1
-
-            pars['amp{}'.format(i)].min = 0.0
-
-        
-        
-    elif fit_model == 'Ha':
-
-        """
-        Implement the Shen+15/11 fitting procedure
-        The narrow components of Hα, [NII]λλ6548,6584, [SII]λλ6717,6731 are each fit with a single Gaussian. 
-        Their velocity offsets from the systemic redshift and line widths are constrained to be the same
-        The relative flux ratio of the two [NII] components is fixed to 2.96 - which way round is this? 
-        We impose an upper limit on the narrow line FWHM < 1200 km/s 
-        The broad Hα component is modelled in two different ways: 
-        a) a single Gaussian with a FWHM > 1200 km/s; 
-        b) multiple Gaussians with up to three Gaussians, each with a FWHM >1200 km/s. 
-        The second method yields similar results to the fits with a truncated Gaussian-Hermite function. 
-        During the fitting, all lines are restricted to be emission lines (i.e., positive flux)
-
-        Also fit Boroson and Green iron template 
-
-        """
-
-        xscale = 1.0 
-
-        mod = GaussianModel(prefix='ha_n_')  
-
-        mod += GaussianModel(prefix='nii_6548_n_')
-
-        mod += GaussianModel(prefix='nii_6584_n_')
-
-        mod += GaussianModel(prefix='sii_6717_n_')
-
-        mod += GaussianModel(prefix='sii_6731_n_')
-
-
-        for i in range(nGaussians):
-
-            mod += GaussianModel(prefix='ha_b_{}_'.format(i))  
-
-        pars = mod.make_params() 
-
-        pars['nii_6548_n_amplitude'].value = 1000.0
-        pars['nii_6584_n_amplitude'].value = 1000.0
-        pars['sii_6717_n_amplitude'].value = 1000.0 
-        pars['sii_6731_n_amplitude'].value = 1000.0 
-        pars['ha_n_amplitude'].value = 1000.0  
-        for i in range(nGaussians):
-            pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
-
-        for i in range(nGaussians): 
-            pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
-            pars['ha_b_{}_center'.format(i)].min = -2000.0  
-            pars['ha_b_{}_center'.format(i)].max = 2000.0  
-
-        pars['nii_6548_n_sigma'].value = ha_narrow_fwhm / 2.35 
-        pars['nii_6584_n_sigma'].value = ha_narrow_fwhm / 2.35
-        pars['sii_6717_n_sigma'].value = ha_narrow_fwhm / 2.35
-        pars['sii_6731_n_sigma'].value = ha_narrow_fwhm / 2.35
-        pars['ha_n_sigma'].value = ha_narrow_fwhm / 2.35 
-
-        if ha_narrow_vary is False:
-
-            pars['nii_6548_n_sigma'].vary = False
-            pars['nii_6584_n_sigma'].vary = False
-            pars['sii_6717_n_sigma'].vary = False
-            pars['sii_6731_n_sigma'].vary = False
-            pars['ha_n_sigma'].vary = False
+            p = Pool(cores)
+            out = p.map(fit2_p, fitobj)
+            p.close() 
+            p.join()
 
         else:
+            
+            out = map(fit2_p, fitobj)
 
-            pars['ha_n_sigma'].max = 1200.0 / 2.35 
-            pars['ha_n_sigma'].min = 400.0 / 2.35 
-            pars['nii_6548_n_sigma'].set(expr='ha_n_sigma')
-            pars['nii_6584_n_sigma'].set(expr='ha_n_sigma')
-            pars['sii_6717_n_sigma'].set(expr='ha_n_sigma')
-            pars['sii_6731_n_sigma'].set(expr='ha_n_sigma')
-   
-        for i in range(nGaussians): 
-            pars['ha_b_{}_sigma'.format(i)].value = 1200.0
+        for k, o in enumerate(out):
 
-        for i in range(nGaussians): 
-            pars['ha_b_{}_sigma'.format(i)].min = 1200.0 / 2.35
+            flux_array_fit[k, :] = o[0]
+            flux_array_plot[k, :] = o[1]
+            mono_lum[k] = o[2].value
+            eqw_fe[k] = o[3]
+            bkgdpars.append(o[4])
 
-        pars['nii_6548_n_amplitude'].min = 0.0
-        pars['nii_6584_n_amplitude'].min = 0.0
-        pars['sii_6717_n_amplitude'].min = 0.0 
-        pars['sii_6731_n_amplitude'].min = 0.0 
-        pars['ha_n_amplitude'].min = 0.0 
-        for i in range(nGaussians): 
-            pars['ha_b_{}_amplitude'.format(i)].min = 0.0  
-        
-        pars['ha_n_center'].value = ha_narrow_voff 
-        pars['sii_6731_n_center'].value = ha_narrow_voff + wave2doppler(6731*u.AA, w0).value 
-        pars['sii_6717_n_center'].value = ha_narrow_voff + wave2doppler(6717*u.AA, w0).value 
-        pars['nii_6548_n_center'].value = ha_narrow_voff + wave2doppler(6548*u.AA, w0).value 
-        pars['nii_6584_n_center'].value  = ha_narrow_voff + wave2doppler(6584*u.AA, w0).value 
-
-        if ha_narrow_vary is False:
-
-            pars['ha_n_center'].vary = False 
-            pars['sii_6731_n_center'].vary = False 
-            pars['sii_6717_n_center'].vary = False 
-            pars['nii_6548_n_center'].vary = False 
-            pars['nii_6584_n_center'].vary = False  
-
-        else: 
-
-            pars['ha_n_center'].min = -500.0
-            pars['ha_n_center'].max = 500.0
-    
-            pars['sii_6731_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6731*u.AA, w0).value))
-            pars['sii_6717_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6717*u.AA, w0).value))
-            pars['nii_6548_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6548*u.AA, w0).value))
-            pars['nii_6584_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6584*u.AA, w0).value))
-
-        pars['nii_6548_n_amplitude'].set(expr='0.333*nii_6584_n_amplitude')
-
-        
-    elif fit_model == 'Hb':
-
-        """
-        From Shen+15/11
-
-        Need to get Boroson and Green (1992) optical iron template, 
-        which people seem to convolve with a Gaussian
-    
-        Model each [OIII] line with Gaussian, one for the core and the other for the blue wing.
-        Decide whether to fix flux ratio 3:1
-        Velocity offset and FWHM of narrow Hb tied to the core [OIII] components
-        Upper limit of 1200 km/s on the narrow line FWHM
-        Broad Hb modelled by single gaussian, or up to 3 Gaussians each with FWHM > 1200 km/s
-
-        It seams like a = b not the same as b = a, which is annoying. 
-        Need to be careful
-
-        """
-
-        xscale = 1.0 
-
-        mod = GaussianModel(prefix='oiii_4959_n_')
-
-        mod += GaussianModel(prefix='oiii_5007_n_')
-
-        mod += GaussianModel(prefix='oiii_4959_b_')
-
-        mod += GaussianModel(prefix='oiii_5007_b_')
-
-        if hb_narrow is True: 
-            mod += GaussianModel(prefix='hb_n_')  
-
-        for i in range(nGaussians):
-
-            mod += GaussianModel(prefix='hb_b_{}_'.format(i))  
-
-        pars = mod.make_params() 
-
-        pars['oiii_4959_n_amplitude'].value = 1000.0
-        pars['oiii_5007_n_amplitude'].value = 1000.0
-        pars['oiii_4959_b_amplitude'].value = 1000.0 
-        pars['oiii_5007_b_amplitude'].value = 1000.0 
-        if hb_narrow is True: 
-            pars['hb_n_amplitude'].value = 1000.0  
-        for i in range(nGaussians):
-            pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
-
-        pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
-        pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
-        pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
-        pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
-        if hb_narrow is True: 
-            pars['hb_n_center'].value = 0.0    
-        for i in range(nGaussians): 
-            pars['hb_b_{}_center'.format(i)].value = -100.0  
-            pars['hb_b_{}_center'.format(i)].min = -2000.0  
-            pars['hb_b_{}_center'.format(i)].max = 2000.0  
-
-        pars['oiii_4959_n_sigma'].value = 800 / 2.35
-        pars['oiii_5007_n_sigma'].value = 800 / 2.35
-        pars['oiii_4959_b_sigma'].value = 1200.0 
-        pars['oiii_5007_b_sigma'].value = 1200.0 
-        if hb_narrow is True: 
-            pars['hb_n_sigma'].value = 800 / 2.35
-        for i in range(nGaussians): 
-            pars['hb_b_{}_sigma'.format(i)].value = 1200.0
-
-        pars['oiii_4959_n_amplitude'].min = 0.0
-        pars['oiii_5007_n_amplitude'].min = 0.0
-        pars['oiii_4959_b_amplitude'].min = 0.0 
-        pars['oiii_5007_b_amplitude'].min = 0.0 
-        if hb_narrow is True:      
-            pars['hb_n_amplitude'].min = 0.0 
-        for i in range(nGaussians): 
-            pars['hb_b_{}_amplitude'.format(i)].min = 0.0  
-        
-
-        pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 500.0
-        pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 500.0
-        if hb_narrow is True: 
-            pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
-        pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
-
-        pars['oiii_5007_n_sigma'].max = 900.0 / 2.35 
-        pars['oiii_5007_n_sigma'].min = 400.0 / 2.35 
-        pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
-        if hb_narrow is True: 
-            pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
-
-        pars.add('oiii_5007_b_center_delta') 
-        pars['oiii_5007_b_center_delta'].value = 500.0 
-        pars['oiii_5007_b_center_delta'].min = -1500.0 
-        pars['oiii_5007_b_center_delta'].max = 1500.0
-
-        pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
-
-        pars.add('oiii_4959_b_center_delta') 
-        pars['oiii_4959_b_center_delta'].value = 500.0 
-        pars['oiii_4959_b_center_delta'].min = -1500.0 
-        pars['oiii_4959_b_center_delta'].max = 1000.0
-
-        pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_4959_b_center_delta')
-
-        for i in range(nGaussians): 
-            pars['hb_b_{}_sigma'.format(i)].min = 1000.0 / 2.35
-    
-        pars['oiii_5007_b_sigma'].min = 1200.0 / 2.35 
-        pars['oiii_5007_b_sigma'].max = 6000.0 / 2.35
-        pars['oiii_4959_b_sigma'].set(expr='oiii_5007_b_sigma')
-
-        # Set amplitude of [oiii] broad component less than narrow component 
-        pars.add('oiii_5007_b_amp_delta')
-        pars['oiii_5007_b_amp_delta'].value = 0.1
-        pars['oiii_5007_b_amp_delta'].min = 0.0 
-
-        pars['oiii_5007_b_amplitude'].set(expr='((oiii_5007_n_amplitude/oiii_5007_n_sigma)-oiii_5007_b_amp_delta)*oiii_5007_b_sigma')
-
-        # Set 3:1 [OIII] peak ratio  
-        pars['oiii_4959_n_amplitude'].set(expr='0.3333*oiii_5007_n_amplitude')
-
-        # Also set 3:1 [OIII] peak ratio for broad components 
-        pars.add('oiii_4959_b_amp_delta')   
-        pars['oiii_4959_b_amp_delta'].value = 0.1 
-        pars['oiii_4959_b_amp_delta'].min = 0.0
-
-        pars['oiii_4959_b_amplitude'].set(expr='oiii_4959_b_sigma*((oiii_5007_b_amplitude/oiii_5007_b_sigma)-oiii_4959_b_amp_delta)/3')  
-
-
-    elif fit_model == 'siiv':
-
-        xscale = 1.0 
-
-        mod = GaussianModel(prefix='g0_') + GaussianModel(prefix='g1_') + GaussianModel(prefix='g2_') + GaussianModel(prefix='g3_') 
-        
-        pars = mod.make_params() 
-
-        pars['g0_amplitude'].value = 1.0
-        pars['g1_amplitude'].value = 1.0
-        pars['g2_amplitude'].value = 1.0
-        pars['g3_amplitude'].value = 1.0
-
-        pars['g0_amplitude'].min = 0.0
-        pars['g1_amplitude'].min = 0.0
-        
-        pars['g2_amplitude'].set(expr='g0_amplitude')
-        pars['g3_amplitude'].set(expr='g1_amplitude')
-
-        pars['g0_sigma'].value = 1.0
-        pars['g1_sigma'].value = 1.0
-        pars['g2_sigma'].value = 1.0
-        pars['g3_sigma'].value = 1.0
-
-        pars['g0_sigma'].min = 1000.0
-        pars['g1_sigma'].min = 1000.0
-
-        pars['g2_sigma'].set(expr='g0_sigma')
-        pars['g3_sigma'].set(expr='g1_sigma')
-
-        pars['g0_center'].value = 0.0
-        pars['g1_center'].value = 0.0
-        pars['g2_center'].value = 0.0
-        pars['g3_center'].value = 0.0
-
-        pars['g1_center'].set(expr='g0_center')        
-        pars['g2_center'].set(expr = 'g0_center+{}'.format(wave2doppler(1402*u.AA, w0).value - wave2doppler(1397*u.AA, w0).value))
-        pars['g3_center'].set(expr='g2_center')
 
 
     if (n_samples > 1) & (plot is True):
@@ -2847,826 +4103,1810 @@ def fit_line(wav,
         fit.set_ylim(ma.median(flux_array_fit[k, :]) - 2.0*ma.std(flux_array_fit[k, :]), ma.median(flux_array_fit[k, :]) + 4.0*ma.std(flux_array_fit[k, :]))
         residuals.set_ylim(-6, 6)
 
-    for k, (x, y, er) in enumerate(zip(vdat_array_fit, flux_array_fit, err_array_fit)):
+    else:
 
-        if n_samples > 1:
-            print plot_title, k 
+        fig, fit, residuals = None, None, None 
 
-        if fit_model == 'MultiGauss':
 
-            for i in range(nGaussians):
+    fitobj = []
+
+    for k in range(n_samples):
+        fitobj.append([k, 
+                       vdat_array_fit[k, :], 
+                       flux_array_fit[k, :], 
+                       err_array_fit[k, :], 
+                       wav_array_plot[k, :], 
+                       vdat_array_plot[k, :], 
+                       flux_array_plot[k, :], 
+                       err_array_plot[k, :], 
+                       bkgdpars[k],  
+                       mono_lum[k], 
+                       eqw_fe[k],
+                       snr[k]])
+
+    fit3_p = partial(fit3,
+                     fit_model = fit_model, 
+                     nGaussians = nGaussians, 
+                     gh_order = gh_order, 
+                     fitting_region = fitting_region, 
+                     ha_narrow_fwhm = ha_narrow_fwhm, 
+                     ha_narrow_vary = ha_narrow_vary, 
+                     ha_narrow_voff = ha_narrow_voff, 
+                     w0 = w0, 
+                     hb_narrow = hb_narrow, 
+                     n_samples = n_samples, 
+                     plot = plot, 
+                     continuum_region = continuum_region, 
+                     fitting_method = fitting_method, 
+                     save_dir = save_dir, 
+                     subtract_fe = subtract_fe, 
+                     home_dir = home_dir,
+                     z = z, 
+                     line_region = line_region, 
+                     spec_norm = spec_norm, 
+                     plot_title = plot_title, 
+                     verbose = verbose,
+                     spec_dv = spec_dv,
+                     wav = wav, 
+                     flux = flux,
+                     err = err,
+                     mono_lum_wav = mono_lum_wav,
+                     emission_line = emission_line,
+                     plot_savefig = plot_savefig,
+                     maskout = maskout,
+                     plot_region = plot_region,
+                     mask_negflux = mask_negflux,
+                     reject_outliers = reject_outliers,
+                     reject_width = reject_width,
+                     reject_sigma = reject_sigma,
+                     fig = fig, 
+                     fit = fit,
+                     residuals = residuals,
+                     fix_broad_peaks = fix_broad_peaks,
+                     oiii_broad_off = oiii_broad_off)
+
+    if parallel:
+        
+        p = Pool(cores)
+        out = p.map(fit3_p, fitobj)
+        p.close() 
+        p.join()
+
+    else:
+        
+        out = map(fit3_p, fitobj)
+
+    
+    if (save_dir is not None) & (n_samples > 1):
+        
+        for k in range(n_samples):
+            for col in df_out:
+                df_out.loc[k, col] = out[k][col]
+
+      
+        df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+         
+    else:
+
+        return out[0]
+         
+         
+         
+         
+         
+
+        # if subtract_fe is True:
+
+        #     ################################################################################
+        #     """
+        #     Optical FeII template
+        
+        #     Broaden by convolution with Gaussian using astropy 
+        #     Add to power-law with normalisation
+        #     Allow shifting as well?
+        
+        #     Shen does all fits in logarithmic wavelength space. 
+        #     Does this make a difference? 
+        
+        #     Convolve with width of Balmer line - might have to do iteratively 
+        
+        #     Either use FWHM from fit to Ha or leave convolution as a free paramter 
+        #     See how this compares. 
+        #     """
+
+        #     fname = os.path.join(home_dir,'SpectraTools/irontemplate.dat')
+        #     fe_wav, fe_flux = np.genfromtxt(fname, unpack=True)
+        
+        #     fe_flux = fe_flux / np.median(fe_flux)
+    
+        #     sp_fe = spec.Spectrum(wa=10**fe_wav, fl=fe_flux)
+
+        #     bkgdmod = Model(PseudoContinuum, 
+        #                     param_names=['amplitude',
+        #                                  'exponent',
+        #                                  'fe_norm',
+        #                                  'fe_sd',
+        #                                  'fe_shift'], 
+        #                     independent_vars=['x']) 
+            
+        #     bkgdpars = bkgdmod.make_params() 
+            
+        #     fe_sigma = fe_FWHM / 2.35 
+        #     fe_pix = fe_sigma / (sp_fe.dv * (u.km/u.s))
+
+        #     bkgdpars['fe_sd'].vary = fe_FWHM_vary
+
+        #     bkgdpars['fe_norm'].min = 0.0
+        #     bkgdpars['fe_sd'].min = 2000.0 / 2.35 / sp_fe.dv
+        #     bkgdpars['fe_sd'].max = 12000.0 / 2.35 / sp_fe.dv
+
+        #     bkgdpars['fe_shift'].min = -20.0
+        #     bkgdpars['fe_shift'].max = 20.0
+
+        #     # I think that constraining the power-law slope to be negative
+        #     # helps break some of the degeneracy between the fe template
+        #     # and the continuum. I don't want to change any of my fits
+        #     # so for now just do this for the pseudo-continuum fit. 
+
+        #     # Seems to break if max is set to 0.0
+
+        #     # if pseudo_continuum_fit:
+
+        #     #     bkgdpars['exponent'].max = 0.5 
+
+
+        # if subtract_fe is False:
+
+        #     bkgdmod = Model(PLModel, 
+        #                     param_names=['amplitude','exponent'], 
+        #                     independent_vars=['x']) 
+
+        #     bkgdpars = bkgdmod.make_params()
+            
+        #-------------------------------------------------------------------------------------
+    #     mono_lum, eqw_fe = np.zeros(n_samples), np.zeros(n_samples)
+    #     for k, (x, y, er) in enumerate(zip(xdat_cont, ydat_cont, yerr_cont)):  
+
+    #         if len(ma.getdata(x[~ma.getmaskarray(x)]).value) == 0: 
+    #             if verbose:
+    #                 print 'No flux in continuum region'
+
+    #         if subtract_fe is True:
+
+    #             bkgdpars['fe_sd'].value = fe_pix.value  
+    #             bkgdpars['exponent'].value = -1.0
+    #             bkgdpars['amplitude'].value = 1.0
+    #             bkgdpars['fe_norm'].value = 0.05 
+    #             bkgdpars['fe_shift'].value = 0.0
+
+    #             # print bkgdpars['fe_sd'].value * 2.35 * sp_fe.dv 
+
+    #             out = minimize(resid,
+    #                            bkgdpars,
+    #                            kws={'x':ma.getdata(x[~ma.getmaskarray(x)]).value, 
+    #                                 'model':bkgdmod, 
+    #                                 'data':ma.getdata(y[~ma.getmaskarray(y)]), 
+    #                                 'sigma':ma.getdata(er[~ma.getmaskarray(er)]), 
+    #                                 'sp_fe':sp_fe},
+    #                            method='slsqp')  
+
+    #             flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] = flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])]).value, model=bkgdmod, sp_fe=sp_fe)
+    #             flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] = flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])]).value, model=bkgdmod, sp_fe=sp_fe)                  
+
+            
+    #             ##############################################################################
+    #             """
+    #             Calculate EQW of Fe between 4435 and 4684A - same as Shen (2016)
+    #             """
+    #             fe_fl = PseudoContinuum(np.arange(4434,4684,1), 
+    #                                     0.0,
+    #                                     0.0,
+    #                                     bkgdpars['fe_norm'].value,
+    #                                     bkgdpars['fe_sd'].value,
+    #                                     bkgdpars['fe_shift'].value,
+    #                                     sp_fe)
+
+    #             fe_fl = fe_fl / spec_norm 
+    #             fe_fl = fe_fl * (u.erg / u.cm / u.cm / u.s / u.AA) 
+
+    #             bg_fl = PseudoContinuum(np.arange(4434,4684,1), 
+    #                                     bkgdpars['amplitude'].value,
+    #                                     bkgdpars['exponent'].value,
+    #                                     0.0,
+    #                                     bkgdpars['fe_sd'].value,
+    #                                     bkgdpars['fe_shift'].value,
+    #                                     sp_fe)      
+
+    #             bg_fl = bg_fl / spec_norm 
+    #             bg_fl = bg_fl * (u.erg / u.cm / u.cm / u.s / u.AA) 
+    
+    #             f = (fe_fl + bg_fl) / bg_fl
+    #             eqw_fe[k] = np.nansum((f[:-1] - 1.0) * 1.0) 
+
+    #             if verbose:
+    #                 print 'Fe EW: {}'.format(eqw_fe[k])  
+
+
+
+    #             ###############################################################################
+
+
+
+    #         if subtract_fe is False:
+
+
+    #             bkgdpars['exponent'].value = 1.0
+    #             bkgdpars['amplitude'].value = 1.0 
+
+    #             out = minimize(resid,
+    #                            bkgdpars,
+    #                            kws={'x':ma.getdata(x[~ma.getmaskarray(x)]).value, 
+    #                                 'model':bkgdmod, 
+    #                                 'data':ma.getdata(y[~ma.getmaskarray(y)]),
+    #                                 'sigma':ma.getdata(er[~ma.getmaskarray(er)])},  
+    #                            method='leastsq') 
+
+
+    #             flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] = flux_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_fit[k, ~ma.getmaskarray(wav_array_fit[k ,:])]).value, model=bkgdmod)
+    #             flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] = flux_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])] - resid(params=bkgdpars, x=ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k ,:])]).value, model=bkgdmod)                  
+            
+    #             eqw_fe[k] = 0.0
+
+    #         ####################################################################################################################
+    #         """
+    #         Calculate flux at wavelength mono_lum_wav
+    #         """
+
+    #         # Calculate just power-law continuum (no Fe)
+    #         cont_mod = Model(PLModel, 
+    #                          param_names=['amplitude','exponent'], 
+    #                          independent_vars=['x']) 
+
+    #         cont_pars = cont_mod.make_params()
+    #         cont_pars['exponent'].value = bkgdpars['exponent'].value
+    #         cont_pars['amplitude'].value = bkgdpars['amplitude'].value  
+
+    #         mono_flux = resid(params=cont_pars, 
+    #                           x=[mono_lum_wav.value], 
+    #                           model=cont_mod)[0]
+
+            
+    #         mono_flux = mono_flux / spec_norm
+
+    #         mono_flux = mono_flux * (u.erg / u.cm / u.cm / u.s / u.AA)
+
+    #         lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)
+
+    #         mono_lum[k] = (mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav).value
+
+    #         if n_samples > 1: 
+    #             print plot_title, k, mono_lum[k] 
+
+
+    #         ######################################################################################################################
+
+    #         if pseudo_continuum_fit:
+    
+    #             fit_out = {'name':plot_title,
+    #                        'monolum':np.log10(mono_lum.value),
+    #                        'fe_ew':eqw_fe} 
+        
+    #         if n_samples == 1:  
+
+    #             if verbose:
+
+    #                 print out.message, 'chi-squared = {}'.format(out.redchi)
+    #                 print fit_report(bkgdpars)
+      
+    #                 if subtract_fe is True:
+    #                     print 'Fe FWHM = {0:.1f} km/s (initial = {1:.1f} km/s)'.format(bkgdpars['fe_sd'].value * 2.35 * sp_fe.dv, bkgdpars['fe_sd'].init_value * 2.35 * sp_fe.dv)            
                 
-                pars['g{}_center'.format(i)].value = 0.0
-                pars['g{}_amplitude'.format(i)].value =  1.0 
-                pars['g{}_sigma'.format(i)].value = 1200.0 
-          
-        elif fit_model == 'GaussHermite':
 
-            for i in range(gh_order + 1):
-
-                pars['amp{}'.format(i)].value = 1.0
-                pars['sig{}'.format(i)].value = 1.0
-                pars['cen{}'.format(i)].value = 0.0        
-        
-        elif fit_model == 'Ha':
-
-            pars['nii_6548_n_amplitude'].value = 1000.0
-            pars['nii_6584_n_amplitude'].value = 1000.0
-            pars['sii_6717_n_amplitude'].value = 1000.0 
-            pars['sii_6731_n_amplitude'].value = 1000.0 
-            pars['ha_n_amplitude'].value = 1000.0  
+    #             if plot:
            
-            for i in range(nGaussians):
-                pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
-    
-            for i in range(nGaussians): 
-                pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
-           
-            pars['nii_6548_n_sigma'].value = ha_narrow_fwhm / 2.35 
-            pars['nii_6584_n_sigma'].value = ha_narrow_fwhm / 2.35
-            pars['sii_6717_n_sigma'].value = ha_narrow_fwhm / 2.35
-            pars['sii_6731_n_sigma'].value = ha_narrow_fwhm / 2.35
-            pars['ha_n_sigma'].value = ha_narrow_fwhm / 2.35 
-    
-            for i in range(nGaussians): 
-                pars['ha_b_{}_sigma'.format(i)].value = 1200.0
-    
-            pars['ha_n_center'].value = ha_narrow_voff 
-            pars['sii_6731_n_center'].value = ha_narrow_voff + wave2doppler(6731*u.AA, w0).value 
-            pars['sii_6717_n_center'].value = ha_narrow_voff + wave2doppler(6717*u.AA, w0).value 
-            pars['nii_6548_n_center'].value = ha_narrow_voff + wave2doppler(6548*u.AA, w0).value 
-            pars['nii_6584_n_center'].value  = ha_narrow_voff + wave2doppler(6584*u.AA, w0).value 
-            
-        elif fit_model == 'Hb':
-    
-            pars['oiii_4959_n_amplitude'].value = 1000.0
-            pars['oiii_5007_n_amplitude'].value = 1000.0
-            pars['oiii_4959_b_amplitude'].value = 1000.0 
-            pars['oiii_5007_b_amplitude'].value = 1000.0 
-            if hb_narrow is True: 
-                pars['hb_n_amplitude'].value = 1000.0  
-            for i in range(nGaussians):
-                pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
-    
-            pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
-            pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
-            pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
-            pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
-            if hb_narrow is True: 
-                pars['hb_n_center'].value = 0.0    
-            for i in range(nGaussians): 
-                pars['hb_b_{}_center'.format(i)].value = -100.0  
-    
-            pars['oiii_4959_n_sigma'].value = 800 / 2.35
-            pars['oiii_5007_n_sigma'].value = 800 / 2.35
-            pars['oiii_4959_b_sigma'].value = 1200.0 
-            pars['oiii_5007_b_sigma'].value = 1200.0 
-            if hb_narrow is True: 
-                pars['hb_n_sigma'].value = 800 / 2.35
-            for i in range(nGaussians): 
-                pars['hb_b_{}_sigma'.format(i)].value = 1200.0
-            
-            pars['oiii_4959_b_center_delta'].value = 500.0 
-            pars['oiii_5007_b_amp_delta'].value = 0.1
-            pars['oiii_4959_b_amp_delta'].value = 0.1 
+    #                 """
+    #                 Plotting continuum / iron fit
+    #                 """
 
+    #                 xdat_cont_plot = ma.getdata(xdat_cont[~ma.getmaskarray(xdat_cont)]).value
+    #                 ydat_cont_plot = ma.getdata(ydat_cont[~ma.getmaskarray(ydat_cont)])
+    #                 yerr_cont_plot = ma.getdata(yerr_cont[~ma.getmaskarray(yerr_cont)])
+            
+    #                 fig, axs = plt.subplots(4, 1, figsize=(20,20))
         
-        elif fit_model == 'siiv':
-
-            pars['g0_amplitude'].value = 1.0
-            pars['g1_amplitude'].value = 1.0
-            
-            pars['g0_sigma'].value = 1.0
-            pars['g1_sigma'].value = 1.0
-            
-            pars['g0_center'].value = 0.0
-
-        out = minimize(resid,
-                       pars,
-                       kws={'x':np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale), 
-                            'model':mod, 
-                            'data':ma.getdata(y[~ma.getmaskarray(y)]),
-                            'sigma':ma.getdata(er[~ma.getmaskarray(er)])},
-                       method=fitting_method)
-
-        if n_samples == 1: 
+    #                 axs[0].errorbar(wav.value, 
+    #                                 flux, 
+    #                                 yerr=err, 
+    #                                 linestyle='', 
+    #                                 alpha=0.5,
+    #                                 color='grey')
         
-            if verbose:
+    #                 axs[1].errorbar(wav.value, 
+    #                                 median_filter(flux,51), 
+    #                                 color='grey')
             
-                print out.message 
+    #                 xdat_plotting = np.arange(xdat_cont_plot.min(), xdat_cont_plot.max(), 1)
+
+    #                 if subtract_fe is True: 
+            
+    #                     axs[0].plot(xdat_plotting, 
+    #                                 resid(params=bkgdpars, 
+    #                                       x=xdat_plotting, 
+    #                                       model=bkgdmod, 
+    #                                       sp_fe=sp_fe), 
+    #                                 color='black', 
+    #                                 lw=2)
                 
-                if fit_model == 'GaussHermite':
-        
-                    for key, value in pars.valuesdict().items():
-                        if 'cen' in key:
-                            print key, value * xscale
-                        else:
-                            print key, value
-        
-                else:
-        
-                    print fit_report(pars)
-
-        if (plot) & (n_samples > 1):
-
-            xdat_plot = ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k, :])]).value 
-            vdat_plot = ma.getdata(vdat_array_plot[k, ~ma.getmaskarray(vdat_array_plot[k, :])]).value 
-            ydat_plot = ma.getdata(flux_array_plot[k, ~ma.getmaskarray(flux_array_plot[k, :])]) 
-            yerr_plot = ma.getdata(err_array_plot[k, ~ma.getmaskarray(err_array_plot[k, :])])
-
-            if 'pts1' in locals():
-                pts1.set_data((vdat_plot, ydat_plot))
-            else:
-                pts1, = fit.plot(vdat_plot, ydat_plot, markerfacecolor='grey', markeredgecolor='None', linestyle='', marker='o', markersize=2)
-
-            if 'pts2' in locals():
-                pts2.set_data((vdat_plot, (ydat_plot - resid(params=pars, x=vdat_plot/xscale, model=mod)) / yerr_plot))
-            else:
-                pts2, = residuals.plot(vdat_plot, (ydat_plot - resid(params=pars, x=vdat_plot/xscale, model=mod)) / yerr_plot, markerfacecolor='grey', markeredgecolor='None', linestyle='', marker='o', markersize=2)
-
-            vs = np.linspace(vdat_plot.min(), vdat_plot.max(), 1000)
-
-            if 'line' in locals():
-                line.set_data((vs, resid(params=pars, x=vs/xscale, model=mod)))
-            else:
-                line, = fit.plot(vs, resid(params=pars, x=vs/xscale, model=mod), color='black')
-
-            fig.set_tight_layout(True)
-
-
-            plt.pause(0.1)
-
-
-        if save_dir is not None:
-            
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir)
-    
-            if n_samples == 1: 
-    
-                param_file = os.path.join(save_dir, 'my_params.txt')
-                parfile = open(param_file, 'w')
-                pars.dump(parfile)
-                parfile.close()
-        
-                wav_file = os.path.join(save_dir, 'wav.txt')
-                parfile = open(wav_file, 'wb')
-                pickle.dump(wav, parfile, -1)
-                parfile.close()
-        
-        
-                if subtract_fe is True:
-                    flux_dump = flux - resid(params=bkgdpars, 
-                                             x=wav.value, 
-                                             model=bkgdmod,
-                                             sp_fe=sp_fe)
+    #                     axs[1].plot(xdat_plotting, 
+    #                                 resid(params=bkgdpars, 
+    #                                       x=xdat_plotting, 
+    #                                       model=bkgdmod, 
+    #                                       sp_fe=sp_fe), 
+    #                                 color='black', 
+    #                                 lw=2)
                 
-                if subtract_fe is False:
-                    flux_dump = flux - resid(params=bkgdpars, 
-                                             x=wav.value, 
-                                             model=bkgdmod)
-        
-                flx_file = os.path.join(save_dir, 'flx.txt')
-                parfile = open(flx_file, 'wb')
-                pickle.dump(flux_dump, parfile, -1)
-                parfile.close()
-        
-                err_file = os.path.join(save_dir, 'err.txt')
-                parfile = open(err_file, 'wb')
-                pickle.dump(err, parfile, -1)
-                parfile.close()
-        
-                sd_file = os.path.join(save_dir, 'sd.txt')
-                parfile = open(sd_file, 'wb')
-                pickle.dump(xscale, parfile, -1)
-                parfile.close()
-        
-                fittxt = ''    
-                fittxt += strftime("%Y-%m-%d %H:%M:%S", gmtime()) + '\n \n'
-                fittxt += plot_title + '\n \n'
-                fittxt += r'Converged with chi-squared = ' + str(out.chisqr) + ', DOF = ' + str(out.nfree) + '\n \n'
-                fittxt += fit_report(pars)
-        
-                with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
-                    f.write(fittxt) 
+    #                     gauss = Gaussian1DKernel(stddev=bkgdpars['fe_sd'].value) 
+            
+    #                     fe_flux = convolve(sp_fe.fl, gauss)
+    #                     fe_flux = np.roll(fe_flux, int(bkgdpars['fe_shift'].value))
+    #                     f = interp1d(sp_fe.wa, fe_flux) 
+    #                     fe_flux = f(xdat_cont_plot)   
+    
+    #                     axs[0].plot(xdat_cont_plot, 
+    #                                 bkgdpars['fe_norm'].value * fe_flux, 
+    #                                 color='red')   
 
-        # Calculate stats 
-    
-        if fit_model == 'Hb':
-    
-            """
-            Only use broad Hb components to calculate stats 
-            """
-    
-            mod_broad_hb = ConstantModel()
-    
-            for i in range(nGaussians):
-                mod_broad_hb += GaussianModel(prefix='hb_b_{}_'.format(i))  
-    
-            pars_broad_hb = mod_broad_hb.make_params()
-           
-            pars_broad_hb['c'].value = 0.0
-           
-            for key, value in pars.valuesdict().iteritems():
-                if key.startswith('hb_b_'):
-                    pars_broad_hb[key].value = value 
+                        
+    #                     amp = bkgdpars['amplitude'].value * 5000.0**(-bkgdpars['exponent'].value)    
+                        
+    #                     axs[0].plot(xdat_cont_plot, 
+    #                                 amp*xdat_cont_plot**bkgdpars['exponent'].value, 
+    #                                 color='blue')   
+
+
+    #                     fe_flux = np.roll(sp_fe.fl, int(bkgdpars['fe_shift'].value))
+                       
+    #                     axs[1].plot(sp_fe.wa, 
+    #                                 bkgdpars['fe_norm'].value * fe_flux, 
+    #                                 color='red')  
+
+
+    #                 if subtract_fe is False: 
+
+    #                     axs[0].plot(xdat_plotting, 
+    #                                 resid(params=bkgdpars, 
+    #                                       x=xdat_plotting, 
+    #                                       model=bkgdmod), 
+    #                                 color='black', 
+    #                                 lw=2)
+                
+    #                     axs[1].plot(xdat_plotting, 
+    #                                 resid(params=bkgdpars, 
+    #                                       x=xdat_plotting, 
+    #                                       model=bkgdmod),
+    #                                 color='black', 
+    #                                 lw=2)
+ 
+    #                     bkgdpars_tmp = bkgdpars.copy() 
+
+
+    #                     axs[1].plot(xdat_plotting, 
+    #                                 resid(params=bkgdpars, 
+    #                                       x=xdat_plotting, 
+    #                                       model=bkgdmod),
+    #                                 color='black', 
+    #                                 lw=2)
                     
-    
-            integrand = lambda x: mod_broad_hb.eval(params=pars_broad_hb, x=np.array(x))
-    
-        elif fit_model == 'Ha':
-    
-            """
-            Only use broad Hb components to calculate stats 
-            """
-    
-            mod_broad_ha = ConstantModel()
-    
-            for i in range(nGaussians):
-                mod_broad_ha += GaussianModel(prefix='ha_b_{}_'.format(i))  
-    
-            pars_broad_ha = mod_broad_ha.make_params()
-           
-            pars_broad_ha['c'].value = 0.0
-           
-            for key, value in pars.valuesdict().iteritems():
-                if key.startswith('ha_b_'):
-                    pars_broad_ha[key].value = value 
-                    
-    
-            integrand = lambda x: mod_broad_ha.eval(params=pars_broad_ha, x=np.array(x))    
-    
-        else:
-    
-            integrand = lambda x: mod.eval(params=pars, x=np.array(x))
-    
-        # Calculate FWHM of distribution
-        if line_region.unit == u.AA:
-            line_region = wave2doppler(line_region, w0)
-    
-        dv = 1.0 # i think if this was anything else might need to change intergration.
-        xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
-    
-        norm = np.sum(integrand(xs) * dv)
-        pdf = integrand(xs) / norm
-        cdf = np.cumsum(pdf)
-        cdf_r = np.cumsum(pdf[::-1])[::-1] # reverse cumsum
 
-        # max of line
-        peak_flux = np.max(integrand(xs)) / spec_norm
-    
-        func_center = xs[np.argmax(pdf)] 
+            
+    #                 axs[0].set_xlim(xdat_cont_plot.min() - 50.0, xdat_cont_plot.max() + 50.0)
+    #                 axs[1].set_xlim(axs[0].get_xlim())
+
+    #                 if subtract_fe is True: 
+                    
+    #                     func_vals = resid(params=bkgdpars, 
+    #                                       x=xdat_cont_plot, 
+    #                                       model=bkgdmod, 
+    #                                       sp_fe=sp_fe)
+
+    #                 if subtract_fe is False: 
+
+    #                     func_vals = resid(params=bkgdpars, 
+    #                                       x=xdat_cont_plot, 
+    #                                       model=bkgdmod)
+            
+    #                 axs[0].set_ylim(np.median(ydat_cont_plot) - 3.0*np.std(ydat_cont_plot), np.median(ydat_cont_plot) + 3.0*np.std(ydat_cont_plot))
+    #                 axs[1].set_ylim(axs[0].get_ylim())
+                    
+    #                 xdat_masking = np.arange(wav.min().value, wav.max().value, 0.05)*(u.AA)
+    #                 vdat_masking = wave2doppler(xdat_masking, w0)
+                    
+    #                 mask = (xdat_masking.value < continuum_region[0][0].value) | \
+    #                        ((xdat_masking.value > continuum_region[0][1].value) &  (xdat_masking.value < continuum_region[1][0].value))  | \
+    #                        (xdat_masking.value > continuum_region[1][1].value)
+                    
+    #                 if maskout is not None:
+    #                     for item in maskout:
+    #                         mask = mask | ((vdat_masking.value > item.value[0]) & (vdat_masking.value < item.value[1]))
+                    
+    #                 vdat1_masking = ma.array(vdat_masking.value)
+    #                 vdat1_masking[mask] = ma.masked 
+            
+    #                 for item in ma.extras.flatnotmasked_contiguous(vdat1_masking):
+                    
+    #                     axs[0].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+    #                                doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+    #                                alpha=0.4, 
+    #                                color='powderblue')    
+                  
+    #                     axs[1].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+    #                                doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+    #                                alpha=0.4, 
+    #                                color='powderblue')    
+                   
+    #                     axs[2].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+    #                                doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+    #                                alpha=0.4, 
+    #                                color='powderblue')    
+                    
+    #                     axs[3].axvspan(doppler2wave(vdat1_masking[item].min()*(u.km/u.s), w0).value, 
+    #                                doppler2wave(vdat1_masking[item].max()*(u.km/u.s), w0).value, 
+    #                                alpha=0.4, 
+    #                                color='powderblue')    
+        
+    #                 if subtract_fe is True: 
+                    
+    #                     axs[2].scatter(xdat_cont_plot, 
+    #                                   (ydat_cont_plot - resid(params=bkgdpars, 
+    #                                                           x=xdat_cont_plot, 
+    #                                                           model=bkgdmod, 
+    #                                                           sp_fe=sp_fe)) / yerr_cont_plot, 
+    #                                   edgecolor='None', 
+    #                                   s=15, 
+    #                                   facecolor='black')
+
+    #                 if subtract_fe is False: 
+
+    #                     axs[2].scatter(xdat_cont_plot, 
+    #                                   (ydat_cont_plot - resid(params=bkgdpars, 
+    #                                                           x=xdat_cont_plot, 
+    #                                                           model=bkgdmod)) / yerr_cont_plot, 
+    #                                   edgecolor='None', 
+    #                                   s=15, 
+    #                                   facecolor='black')
+
+                    
+    #                 axs[2].axhline(0.0, color='black', linestyle='--')
+    #                 axs[2].set_xlim(axs[0].get_xlim())
+            
+    #                 axs[3].plot(wav.value, flux, color='grey')
+
+    #                 if subtract_fe is True:
+                    
+    #                     axs[3].plot(xdat_cont_plot, 
+    #                                 resid(params=bkgdpars, 
+    #                                       x=xdat_cont_plot, 
+    #                                       model=bkgdmod, 
+    #                                       sp_fe=sp_fe), 
+    #                                 color='black', 
+    #                                 lw=2)
+
+    #                 if subtract_fe is False: 
+
+    #                     axs[3].plot(xdat_cont_plot, 
+    #                                 resid(params=bkgdpars, 
+    #                                       x=xdat_cont_plot, 
+    #                                       model=bkgdmod), 
+    #                                 color='black', 
+    #                                 lw=2)
+
+    #                 if reject_outliers: 
+
+    #                     mask = ma.getmaskarray(wav_array_blue).flatten() 
+            
+    #                     mask[ma.getdata(wav_array_blue.flatten()).value < continuum_region[0][0].value] = False
+    #                     mask[ma.getdata(wav_array_blue.flatten()).value > continuum_region[0][1].value] = False
+            
+    #                     xdat_cont_outliers = ma.masked_where(~mask, ma.getdata(wav_array_blue).flatten())
+    #                     ydat_cont_outliers = ma.masked_where(~mask, ma.getdata(flux_array_blue).flatten())
+            
+    #                     axs[0].scatter(xdat_cont_outliers,
+    #                                    ydat_cont_outliers,
+    #                                    color='firebrick', 
+    #                                    s=40, 
+    #                                    marker='x') 
+            
+    #                     mask = ma.getmaskarray(wav_array_red).flatten() 
+            
+    #                     mask[ma.getdata(wav_array_red.flatten()).value < continuum_region[1][0].value] = False
+    #                     mask[ma.getdata(wav_array_red.flatten()).value > continuum_region[1][1].value] = False
+            
+    #                     xdat_cont_outliers = ma.masked_where(~mask, ma.getdata(wav_array_red).flatten())
+    #                     ydat_cont_outliers = ma.masked_where(~mask, ma.getdata(flux_array_red).flatten())
+            
+    #                     axs[0].scatter(xdat_cont_outliers,
+    #                                    ydat_cont_outliers,
+    #                                    color='firebrick', 
+    #                                    s=40, 
+    #                                    marker='x') 
+
+    #                 if verbose:
+            
+    #                     global coords
+    #                     coords = [] 
+    #                     cid = fig.canvas.mpl_connect('button_press_event', lambda x: onclick2(x, w0=w0))
+            
+    #                     plt.show(1)
+            
+    #                 plt.close() 
+
+    # if pseudo_continuum_fit:
+
+    #     """
+    #     Only fitting PseudoContinuum
+    #     """
+
+    #     if n_samples == 1:       
+
+    #         return fit_out
+
+    #     else: 
        
-        half_max = np.max(pdf) / 2.0
-    
-        i = 0
-        while pdf[i] < half_max:
-            i+=1
-    
-        root1 = xs[i]
-    
-        i = 0
-        while pdf[-i] < half_max:
-            i+=1
-    
-        root2 = xs[-i]
-    
-        md = xs[np.argmin( np.abs( cdf - 0.5))]
-     
-        m = np.sum(xs * pdf * dv)
-    
-        v = np.sum( (xs-m)**2 * pdf * dv )
-        sd = np.sqrt(v)
-    
-        # Equivalent width
-        flux_line = integrand(xs)
-        xs_wav = doppler2wave(xs*xscale*(u.km/u.s), w0)
-     
-        if subtract_fe is True:
-            flux_bkgd = resid(params=bkgdpars, 
-                              x=xs_wav.value, 
-                              model=bkgdmod,
-                              sp_fe=sp_fe)
+    #         if save_dir is not None:
+    #             df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+
+    #         return None 
+
+       
+
+    # Rescale x axis so everything is of order unity.
+    # y axis has already been scaled  
+
+    # if fit_model == 'MultiGauss':
+
+    #     xscale = 1.0 
+
+    #     # Make model 
+    #     bkgd = ConstantModel()
+    #     mod = bkgd
+    #     pars = bkgd.make_params()
         
-        if subtract_fe is False:
-            flux_bkgd = resid(params=bkgdpars, 
-                              x=xs_wav.value, 
-                              model=bkgdmod)
+    #     # A bit unnessesary, but I need a way to do += in the loop below
+    #     pars['c'].value = 0.0
+    #     pars['c'].vary = False
+
+
+    #     for i in range(nGaussians):
+    #         gmod = GaussianModel(prefix='g{}_'.format(i))
+    #         mod += gmod
+    #         pars += gmod.guess(flux_array_fit[0,~ma.getmaskarray(flux_array_fit[0,:])], x=ma.getdata(vdat_array_fit[0,~ma.getmaskarray(vdat_array_fit[0,:])]).value)
+
+
+               
+    #     for i in range(nGaussians):
+    #         pars['g{}_center'.format(i)].value = 0.0
+    #         pars['g{}_center'.format(i)].min = -2000.0
+    #         pars['g{}_center'.format(i)].max = 2000.0 
+    #         pars['g{}_amplitude'.format(i)].min = 0.0
+    #         # pars['g{}_sigma'.format(i)].min = 1000.0 # sometimes might be better if this is relaxed 
+    #         # pars['g{}_sigma'.format(i)].max = 10000.0 
+
+    #     # pars['g0_center'].set(expr='g1_center') 
+
+    # elif fit_model == 'GaussHermite':
+
+    #     # Calculate mean and variance
+
+    #     """
+    #     Because p isn't a real probability distribution we sometimes get negative 
+    #     variances if a lot of the flux is negative. 
+    #     Therefore confine this to only work on the bit of the 
+    #     spectrum that is positive
+    #     """
+
+    #     ydat = ma.getdata(flux_array_fit[0,~ma.getmaskarray(flux_array_fit[0,:])])
+    #     vdat = ma.getdata(vdat_array_fit[0,~ma.getmaskarray(vdat_array_fit[0,:])])
+
+
+    #     p = ydat[ydat > 0.0] / np.sum(ydat[ydat > 0.0])
+    #     m = np.sum(vdat[ydat > 0.0] * p)
+    #     v = np.sum(p * (vdat[ydat > 0.0]-m)**2)
+    #     xscale = np.sqrt(v).value 
+
+    #     param_names = []
+
+    #     for i in range(gh_order + 1):
+            
+    #         param_names.append('amp{}'.format(i))
+    #         param_names.append('sig{}'.format(i))
+    #         param_names.append('cen{}'.format(i))
+
+    #     if gh_order == 0: 
+ 
+    #         mod = Model(gausshermite_0, independent_vars=['x'], param_names=param_names) 
+    
+    #     if gh_order == 1: 
+ 
+    #         mod = Model(gausshermite_1, independent_vars=['x'], param_names=param_names) 
+     
+    #     if gh_order == 2: 
+ 
+    #         mod = Model(gausshermite_2, independent_vars=['x'], param_names=param_names) 
+     
+    #     if gh_order == 3: 
+ 
+    #         mod = Model(gausshermite_3, independent_vars=['x'], param_names=param_names) 
+     
+    #     if gh_order == 4: 
+ 
+    #         mod = Model(gausshermite_4, independent_vars=['x'], param_names=param_names) 
+     
+    #     if gh_order == 5: 
+ 
+    #         mod = Model(gausshermite_5, independent_vars=['x'], param_names=param_names) 
+
+    #     if gh_order == 6: 
+ 
+    #         mod = Model(gausshermite_6, independent_vars=['x'], param_names=param_names) 
+
+    #     pars = mod.make_params()
+
+    #     for i in range(gh_order + 1):
+
+    #         pars['amp{}'.format(i)].value = 1.0
+    #         pars['sig{}'.format(i)].value = 1.0
+    #         pars['cen{}'.format(i)].value = 0.0
+ 
+    #         # remember that wav_fitting_array mask includes the background windows, 
+    #         # so don't use this 
+    #         # already converted fitting_region in to units of wavelength. 
+
+    #         pars['cen{}'.format(i)].min = wave2doppler(fitting_region[0], w0).value / xscale
+    #         pars['cen{}'.format(i)].max = wave2doppler(fitting_region[1], w0).value / xscale
+
+    #         pars['sig{}'.format(i)].min = 0.1
+
+    #         pars['amp{}'.format(i)].min = 0.0
+
+        
+        
+    # elif fit_model == 'Ha':
+
+    #     """
+    #     Implement the Shen+15/11 fitting procedure
+    #     The narrow components of Hα, [NII]λλ6548,6584, [SII]λλ6717,6731 are each fit with a single Gaussian. 
+    #     Their velocity offsets from the systemic redshift and line widths are constrained to be the same
+    #     The relative flux ratio of the two [NII] components is fixed to 2.96 - which way round is this? 
+    #     We impose an upper limit on the narrow line FWHM < 1200 km/s 
+    #     The broad Hα component is modelled in two different ways: 
+    #     a) a single Gaussian with a FWHM > 1200 km/s; 
+    #     b) multiple Gaussians with up to three Gaussians, each with a FWHM >1200 km/s. 
+    #     The second method yields similar results to the fits with a truncated Gaussian-Hermite function. 
+    #     During the fitting, all lines are restricted to be emission lines (i.e., positive flux)
+
+    #     Also fit Boroson and Green iron template 
+
+    #     """
+
+    #     xscale = 1.0 
+
+    #     mod = GaussianModel(prefix='ha_n_')  
+
+    #     mod += GaussianModel(prefix='nii_6548_n_')
+
+    #     mod += GaussianModel(prefix='nii_6584_n_')
+
+    #     mod += GaussianModel(prefix='sii_6717_n_')
+
+    #     mod += GaussianModel(prefix='sii_6731_n_')
+
+
+    #     for i in range(nGaussians):
+
+    #         mod += GaussianModel(prefix='ha_b_{}_'.format(i))  
+
+    #     pars = mod.make_params() 
+
+    #     pars['nii_6548_n_amplitude'].value = 1000.0
+    #     pars['nii_6584_n_amplitude'].value = 1000.0
+    #     pars['sii_6717_n_amplitude'].value = 1000.0 
+    #     pars['sii_6731_n_amplitude'].value = 1000.0 
+    #     pars['ha_n_amplitude'].value = 1000.0  
+    #     for i in range(nGaussians):
+    #         pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
+
+    #     for i in range(nGaussians): 
+    #         pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
+    #         pars['ha_b_{}_center'.format(i)].min = -2000.0  
+    #         pars['ha_b_{}_center'.format(i)].max = 2000.0  
+
+    #     pars['nii_6548_n_sigma'].value = ha_narrow_fwhm / 2.35 
+    #     pars['nii_6584_n_sigma'].value = ha_narrow_fwhm / 2.35
+    #     pars['sii_6717_n_sigma'].value = ha_narrow_fwhm / 2.35
+    #     pars['sii_6731_n_sigma'].value = ha_narrow_fwhm / 2.35
+    #     pars['ha_n_sigma'].value = ha_narrow_fwhm / 2.35 
+
+    #     if ha_narrow_vary is False:
+
+    #         pars['nii_6548_n_sigma'].vary = False
+    #         pars['nii_6584_n_sigma'].vary = False
+    #         pars['sii_6717_n_sigma'].vary = False
+    #         pars['sii_6731_n_sigma'].vary = False
+    #         pars['ha_n_sigma'].vary = False
+
+    #     else:
+
+    #         pars['ha_n_sigma'].max = 1200.0 / 2.35 
+    #         pars['ha_n_sigma'].min = 400.0 / 2.35 
+    #         pars['nii_6548_n_sigma'].set(expr='ha_n_sigma')
+    #         pars['nii_6584_n_sigma'].set(expr='ha_n_sigma')
+    #         pars['sii_6717_n_sigma'].set(expr='ha_n_sigma')
+    #         pars['sii_6731_n_sigma'].set(expr='ha_n_sigma')
+   
+    #     for i in range(nGaussians): 
+    #         pars['ha_b_{}_sigma'.format(i)].value = 1200.0
+
+    #     for i in range(nGaussians): 
+    #         pars['ha_b_{}_sigma'.format(i)].min = 1200.0 / 2.35
+
+    #     pars['nii_6548_n_amplitude'].min = 0.0
+    #     pars['nii_6584_n_amplitude'].min = 0.0
+    #     pars['sii_6717_n_amplitude'].min = 0.0 
+    #     pars['sii_6731_n_amplitude'].min = 0.0 
+    #     pars['ha_n_amplitude'].min = 0.0 
+    #     for i in range(nGaussians): 
+    #         pars['ha_b_{}_amplitude'.format(i)].min = 0.0  
+        
+    #     pars['ha_n_center'].value = ha_narrow_voff 
+    #     pars['sii_6731_n_center'].value = ha_narrow_voff + wave2doppler(6731*u.AA, w0).value 
+    #     pars['sii_6717_n_center'].value = ha_narrow_voff + wave2doppler(6717*u.AA, w0).value 
+    #     pars['nii_6548_n_center'].value = ha_narrow_voff + wave2doppler(6548*u.AA, w0).value 
+    #     pars['nii_6584_n_center'].value  = ha_narrow_voff + wave2doppler(6584*u.AA, w0).value 
+
+    #     if ha_narrow_vary is False:
+
+    #         pars['ha_n_center'].vary = False 
+    #         pars['sii_6731_n_center'].vary = False 
+    #         pars['sii_6717_n_center'].vary = False 
+    #         pars['nii_6548_n_center'].vary = False 
+    #         pars['nii_6584_n_center'].vary = False  
+
+    #     else: 
+
+    #         pars['ha_n_center'].min = -500.0
+    #         pars['ha_n_center'].max = 500.0
+    
+    #         pars['sii_6731_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6731*u.AA, w0).value))
+    #         pars['sii_6717_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6717*u.AA, w0).value))
+    #         pars['nii_6548_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6548*u.AA, w0).value))
+    #         pars['nii_6584_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6584*u.AA, w0).value))
+
+    #     pars['nii_6548_n_amplitude'].set(expr='0.333*nii_6584_n_amplitude')
+
+        
+    # elif fit_model == 'Hb':
+
+    #     """
+    #     From Shen+15/11
+
+    #     Need to get Boroson and Green (1992) optical iron template, 
+    #     which people seem to convolve with a Gaussian
+    
+    #     Model each [OIII] line with Gaussian, one for the core and the other for the blue wing.
+    #     Decide whether to fix flux ratio 3:1
+    #     Velocity offset and FWHM of narrow Hb tied to the core [OIII] components
+    #     Upper limit of 1200 km/s on the narrow line FWHM
+    #     Broad Hb modelled by single gaussian, or up to 3 Gaussians each with FWHM > 1200 km/s
+
+    #     It seams like a = b not the same as b = a, which is annoying. 
+    #     Need to be careful
+
+    #     """
+
+    #     xscale = 1.0 
+
+    #     mod = GaussianModel(prefix='oiii_4959_n_')
+
+    #     mod += GaussianModel(prefix='oiii_5007_n_')
+
+    #     mod += GaussianModel(prefix='oiii_4959_b_')
+
+    #     mod += GaussianModel(prefix='oiii_5007_b_')
+
+    #     if hb_narrow is True: 
+    #         mod += GaussianModel(prefix='hb_n_')  
+
+    #     for i in range(nGaussians):
+
+    #         mod += GaussianModel(prefix='hb_b_{}_'.format(i))  
+
+    #     pars = mod.make_params() 
+
+    #     pars['oiii_4959_n_amplitude'].value = 1000.0
+    #     pars['oiii_5007_n_amplitude'].value = 1000.0
+    #     pars['oiii_4959_b_amplitude'].value = 1000.0 
+    #     pars['oiii_5007_b_amplitude'].value = 1000.0 
+    #     if hb_narrow is True: 
+    #         pars['hb_n_amplitude'].value = 1000.0  
+    #     for i in range(nGaussians):
+    #         pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
+
+    #     pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+    #     pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+    #     pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+    #     pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+    #     if hb_narrow is True: 
+    #         pars['hb_n_center'].value = 0.0    
+    #     for i in range(nGaussians): 
+    #         pars['hb_b_{}_center'.format(i)].value = -100.0  
+    #         pars['hb_b_{}_center'.format(i)].min = -2000.0  
+    #         pars['hb_b_{}_center'.format(i)].max = 2000.0  
+
+    #     pars['oiii_4959_n_sigma'].value = 800 / 2.35
+    #     pars['oiii_5007_n_sigma'].value = 800 / 2.35
+    #     pars['oiii_4959_b_sigma'].value = 1200.0 
+    #     pars['oiii_5007_b_sigma'].value = 1200.0 
+    #     if hb_narrow is True: 
+    #         pars['hb_n_sigma'].value = 800 / 2.35
+    #     for i in range(nGaussians): 
+    #         pars['hb_b_{}_sigma'.format(i)].value = 1200.0
+
+    #     pars['oiii_4959_n_amplitude'].min = 0.0
+    #     pars['oiii_5007_n_amplitude'].min = 0.0
+    #     pars['oiii_4959_b_amplitude'].min = 0.0 
+    #     pars['oiii_5007_b_amplitude'].min = 0.0 
+    #     if hb_narrow is True:      
+    #         pars['hb_n_amplitude'].min = 0.0 
+    #     for i in range(nGaussians): 
+    #         pars['hb_b_{}_amplitude'.format(i)].min = 0.0  
+        
+
+    #     pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 500.0
+    #     pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 500.0
+    #     if hb_narrow is True: 
+    #         pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
+    #     pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
+
+    #     pars['oiii_5007_n_sigma'].max = 900.0 / 2.35 
+    #     pars['oiii_5007_n_sigma'].min = 400.0 / 2.35 
+    #     pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
+    #     if hb_narrow is True: 
+    #         pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
+
+    #     pars.add('oiii_5007_b_center_delta') 
+    #     pars['oiii_5007_b_center_delta'].value = 500.0 
+    #     pars['oiii_5007_b_center_delta'].min = -1500.0 
+    #     pars['oiii_5007_b_center_delta'].max = 1500.0
+
+    #     pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
+
+    #     pars.add('oiii_4959_b_center_delta') 
+    #     pars['oiii_4959_b_center_delta'].value = 500.0 
+    #     pars['oiii_4959_b_center_delta'].min = -1500.0 
+    #     pars['oiii_4959_b_center_delta'].max = 1000.0
+
+    #     pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_4959_b_center_delta')
+
+    #     for i in range(nGaussians): 
+    #         pars['hb_b_{}_sigma'.format(i)].min = 1000.0 / 2.35
+    
+    #     pars['oiii_5007_b_sigma'].min = 1200.0 / 2.35 
+    #     pars['oiii_5007_b_sigma'].max = 6000.0 / 2.35
+    #     pars['oiii_4959_b_sigma'].set(expr='oiii_5007_b_sigma')
+
+    #     # Set amplitude of [oiii] broad component less than narrow component 
+    #     pars.add('oiii_5007_b_amp_delta')
+    #     pars['oiii_5007_b_amp_delta'].value = 0.1
+    #     pars['oiii_5007_b_amp_delta'].min = 0.0 
+
+    #     pars['oiii_5007_b_amplitude'].set(expr='((oiii_5007_n_amplitude/oiii_5007_n_sigma)-oiii_5007_b_amp_delta)*oiii_5007_b_sigma')
+
+    #     # Set 3:1 [OIII] peak ratio  
+    #     pars['oiii_4959_n_amplitude'].set(expr='0.3333*oiii_5007_n_amplitude')
+
+    #     # Also set 3:1 [OIII] peak ratio for broad components 
+    #     pars.add('oiii_4959_b_amp_delta')   
+    #     pars['oiii_4959_b_amp_delta'].value = 0.1 
+    #     pars['oiii_4959_b_amp_delta'].min = 0.0
+
+    #     pars['oiii_4959_b_amplitude'].set(expr='oiii_4959_b_sigma*((oiii_5007_b_amplitude/oiii_5007_b_sigma)-oiii_4959_b_amp_delta)/3')  
+
+
+    # elif fit_model == 'siiv':
+
+    #     xscale = 1.0 
+
+    #     mod = GaussianModel(prefix='g0_') + GaussianModel(prefix='g1_') + GaussianModel(prefix='g2_') + GaussianModel(prefix='g3_') 
+        
+    #     pars = mod.make_params() 
+
+    #     pars['g0_amplitude'].value = 1.0
+    #     pars['g1_amplitude'].value = 1.0
+    #     pars['g2_amplitude'].value = 1.0
+    #     pars['g3_amplitude'].value = 1.0
+
+    #     pars['g0_amplitude'].min = 0.0
+    #     pars['g1_amplitude'].min = 0.0
+        
+    #     pars['g2_amplitude'].set(expr='g0_amplitude')
+    #     pars['g3_amplitude'].set(expr='g1_amplitude')
+
+    #     pars['g0_sigma'].value = 1.0
+    #     pars['g1_sigma'].value = 1.0
+    #     pars['g2_sigma'].value = 1.0
+    #     pars['g3_sigma'].value = 1.0
+
+    #     pars['g0_sigma'].min = 1000.0
+    #     pars['g1_sigma'].min = 1000.0
+
+    #     pars['g2_sigma'].set(expr='g0_sigma')
+    #     pars['g3_sigma'].set(expr='g1_sigma')
+
+    #     pars['g0_center'].value = 0.0
+    #     pars['g1_center'].value = 0.0
+    #     pars['g2_center'].value = 0.0
+    #     pars['g3_center'].value = 0.0
+
+    #     pars['g1_center'].set(expr='g0_center')        
+    #     pars['g2_center'].set(expr = 'g0_center+{}'.format(wave2doppler(1402*u.AA, w0).value - wave2doppler(1397*u.AA, w0).value))
+    #     pars['g3_center'].set(expr='g2_center')
+
+
+    # if (n_samples > 1) & (plot is True):
+
+    #     fig = plt.figure(figsize=(6,10))
+
+    #     fit = fig.add_subplot(3,1,1)
+    #     fit.set_xticklabels( () )
+    #     residuals = fig.add_subplot(3,1,2)
+
+    #     blue_cont = wave2doppler(continuum_region[0], w0)
+    #     red_cont = wave2doppler(continuum_region[1], w0) 
+
+    #     fit.axvspan(blue_cont.value[0], blue_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
+    #     fit.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
+
+    #     residuals.axvspan(blue_cont.value[0], blue_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
+    #     residuals.axvspan(red_cont.value[0], red_cont.value[1], color='grey', lw = 1, alpha = 0.2 )
+
+    #     for item in ma.extras.flatnotmasked_contiguous(vdat_array_fit[0, :].flatten()):
+    #         fit.axvspan(vdat_array_fit[0, item].min(), vdat_array_fit[0, item].max(), color='moccasin', alpha=0.4)
+    #         residuals.axvspan(vdat_array_fit[0, item].min(), vdat_array_fit[0, item].max(), color='moccasin', alpha=0.4)
+
+    #     fit.set_ylabel(r'F$_\lambda$', fontsize=12)
+    #     residuals.set_xlabel(r"$\Delta$ v (kms$^{-1}$)", fontsize=12)
+    #     residuals.set_ylabel("Residual")
+
+    #     if plot_region.unit == (u.km/u.s):
+    #         plot_region = doppler2wave(plot_region, w0)
+
+    #     plot_region_inds = (wav > plot_region[0]) & (wav < plot_region[1])
+    #     plotting_limits = wave2doppler(plot_region, w0) 
+    #     fit.set_xlim(plotting_limits[0].value, plotting_limits[1].value)
+    #     residuals.set_xlim(fit.get_xlim())    
+
+    #     fit.set_ylim(ma.median(flux_array_fit[k, :]) - 2.0*ma.std(flux_array_fit[k, :]), ma.median(flux_array_fit[k, :]) + 4.0*ma.std(flux_array_fit[k, :]))
+    #     residuals.set_ylim(-6, 6)
+
+    # for k, (x, y, er) in enumerate(zip(vdat_array_fit, flux_array_fit, err_array_fit)):
+
+    #     if fit_model == 'MultiGauss':
+
+    #         for i in range(nGaussians):
+                
+    #             pars['g{}_center'.format(i)].value = 0.0
+    #             pars['g{}_amplitude'.format(i)].value =  1.0 
+    #             pars['g{}_sigma'.format(i)].value = 1200.0 
+          
+    #     elif fit_model == 'GaussHermite':
+
+    #         for i in range(gh_order + 1):
+
+    #             pars['amp{}'.format(i)].value = 1.0
+    #             pars['sig{}'.format(i)].value = 1.0
+    #             pars['cen{}'.format(i)].value = 0.0        
+        
+    #     elif fit_model == 'Ha':
+
+    #         pars['nii_6548_n_amplitude'].value = 1000.0
+    #         pars['nii_6584_n_amplitude'].value = 1000.0
+    #         pars['sii_6717_n_amplitude'].value = 1000.0 
+    #         pars['sii_6731_n_amplitude'].value = 1000.0 
+    #         pars['ha_n_amplitude'].value = 1000.0  
+           
+    #         for i in range(nGaussians):
+    #             pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
+    
+    #         for i in range(nGaussians): 
+    #             pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
+           
+    #         pars['nii_6548_n_sigma'].value = ha_narrow_fwhm / 2.35 
+    #         pars['nii_6584_n_sigma'].value = ha_narrow_fwhm / 2.35
+    #         pars['sii_6717_n_sigma'].value = ha_narrow_fwhm / 2.35
+    #         pars['sii_6731_n_sigma'].value = ha_narrow_fwhm / 2.35
+    #         pars['ha_n_sigma'].value = ha_narrow_fwhm / 2.35 
+    
+    #         for i in range(nGaussians): 
+    #             pars['ha_b_{}_sigma'.format(i)].value = 1200.0
+    
+    #         pars['ha_n_center'].value = ha_narrow_voff 
+    #         pars['sii_6731_n_center'].value = ha_narrow_voff + wave2doppler(6731*u.AA, w0).value 
+    #         pars['sii_6717_n_center'].value = ha_narrow_voff + wave2doppler(6717*u.AA, w0).value 
+    #         pars['nii_6548_n_center'].value = ha_narrow_voff + wave2doppler(6548*u.AA, w0).value 
+    #         pars['nii_6584_n_center'].value  = ha_narrow_voff + wave2doppler(6584*u.AA, w0).value 
+            
+    #     elif fit_model == 'Hb':
+    
+    #         pars['oiii_4959_n_amplitude'].value = 1000.0
+    #         pars['oiii_5007_n_amplitude'].value = 1000.0
+    #         pars['oiii_4959_b_amplitude'].value = 1000.0 
+    #         pars['oiii_5007_b_amplitude'].value = 1000.0 
+    #         if hb_narrow is True: 
+    #             pars['hb_n_amplitude'].value = 1000.0  
+    #         for i in range(nGaussians):
+    #             pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
+    
+    #         pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+    #         pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+    #         pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+    #         pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+    #         if hb_narrow is True: 
+    #             pars['hb_n_center'].value = 0.0    
+    #         for i in range(nGaussians): 
+    #             pars['hb_b_{}_center'.format(i)].value = -100.0  
+    
+    #         pars['oiii_4959_n_sigma'].value = 800 / 2.35
+    #         pars['oiii_5007_n_sigma'].value = 800 / 2.35
+    #         pars['oiii_4959_b_sigma'].value = 1200.0 
+    #         pars['oiii_5007_b_sigma'].value = 1200.0 
+    #         if hb_narrow is True: 
+    #             pars['hb_n_sigma'].value = 800 / 2.35
+    #         for i in range(nGaussians): 
+    #             pars['hb_b_{}_sigma'.format(i)].value = 1200.0
+            
+    #         pars['oiii_4959_b_center_delta'].value = 500.0 
+    #         pars['oiii_5007_b_amp_delta'].value = 0.1
+    #         pars['oiii_4959_b_amp_delta'].value = 0.1 
+
+        
+    #     elif fit_model == 'siiv':
+
+    #         pars['g0_amplitude'].value = 1.0
+    #         pars['g1_amplitude'].value = 1.0
+            
+    #         pars['g0_sigma'].value = 1.0
+    #         pars['g1_sigma'].value = 1.0
+            
+    #         pars['g0_center'].value = 0.0
+
+    #     out = minimize(resid,
+    #                    pars,
+    #                    kws={'x':np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale), 
+    #                         'model':mod, 
+    #                         'data':ma.getdata(y[~ma.getmaskarray(y)]),
+    #                         'sigma':ma.getdata(er[~ma.getmaskarray(er)])},
+    #                    method=fitting_method)
+
+    #     if n_samples == 1: 
+        
+    #         if verbose:
+            
+    #             print out.message 
+                
+    #             if fit_model == 'GaussHermite':
+        
+    #                 for key, value in pars.valuesdict().items():
+    #                     if 'cen' in key:
+    #                         print key, value * xscale
+    #                     else:
+    #                         print key, value
+        
+    #             else:
+        
+    #                 print fit_report(pars)
+
+    #     if (plot) & (n_samples > 1):
+
+    #         xdat_plot = ma.getdata(wav_array_plot[k, ~ma.getmaskarray(wav_array_plot[k, :])]).value 
+    #         vdat_plot = ma.getdata(vdat_array_plot[k, ~ma.getmaskarray(vdat_array_plot[k, :])]).value 
+    #         ydat_plot = ma.getdata(flux_array_plot[k, ~ma.getmaskarray(flux_array_plot[k, :])]) 
+    #         yerr_plot = ma.getdata(err_array_plot[k, ~ma.getmaskarray(err_array_plot[k, :])])
+
+    #         if 'pts1' in locals():
+    #             pts1.set_data((vdat_plot, ydat_plot))
+    #         else:
+    #             pts1, = fit.plot(vdat_plot, ydat_plot, markerfacecolor='grey', markeredgecolor='None', linestyle='', marker='o', markersize=2)
+
+    #         if 'pts2' in locals():
+    #             pts2.set_data((vdat_plot, (ydat_plot - resid(params=pars, x=vdat_plot/xscale, model=mod)) / yerr_plot))
+    #         else:
+    #             pts2, = residuals.plot(vdat_plot, (ydat_plot - resid(params=pars, x=vdat_plot/xscale, model=mod)) / yerr_plot, markerfacecolor='grey', markeredgecolor='None', linestyle='', marker='o', markersize=2)
+
+    #         vs = np.linspace(vdat_plot.min(), vdat_plot.max(), 1000)
+
+    #         if 'line' in locals():
+    #             line.set_data((vs, resid(params=pars, x=vs/xscale, model=mod)))
+    #         else:
+    #             line, = fit.plot(vs, resid(params=pars, x=vs/xscale, model=mod), color='black')
+
+    #         fig.set_tight_layout(True)
+
+
+    #         plt.pause(0.1)
+
+
+    #     if save_dir is not None:
+            
+    #         if not os.path.exists(save_dir):
+    #             os.makedirs(save_dir)
+    
+    #         if n_samples == 1: 
+    
+    #             param_file = os.path.join(save_dir, 'my_params.txt')
+    #             parfile = open(param_file, 'w')
+    #             pars.dump(parfile)
+    #             parfile.close()
+        
+    #             wav_file = os.path.join(save_dir, 'wav.txt')
+    #             parfile = open(wav_file, 'wb')
+    #             pickle.dump(wav, parfile, -1)
+    #             parfile.close()
+        
+        
+    #             if subtract_fe is True:
+    #                 flux_dump = flux - resid(params=bkgdpars[k], 
+    #                                          x=wav.value, 
+    #                                          model=bkgdmod,
+    #                                          sp_fe=sp_fe)
+                
+    #             if subtract_fe is False:
+    #                 flux_dump = flux - resid(params=bkgdpars[k], 
+    #                                          x=wav.value, 
+    #                                          model=bkgdmod)
+        
+    #             flx_file = os.path.join(save_dir, 'flx.txt')
+    #             parfile = open(flx_file, 'wb')
+    #             pickle.dump(flux_dump, parfile, -1)
+    #             parfile.close()
+        
+    #             err_file = os.path.join(save_dir, 'err.txt')
+    #             parfile = open(err_file, 'wb')
+    #             pickle.dump(err, parfile, -1)
+    #             parfile.close()
+        
+    #             sd_file = os.path.join(save_dir, 'sd.txt')
+    #             parfile = open(sd_file, 'wb')
+    #             pickle.dump(xscale, parfile, -1)
+    #             parfile.close()
+        
+    #             fittxt = ''    
+    #             fittxt += strftime("%Y-%m-%d %H:%M:%S", gmtime()) + '\n \n'
+    #             fittxt += plot_title + '\n \n'
+    #             fittxt += r'Converged with chi-squared = ' + str(out.chisqr) + ', DOF = ' + str(out.nfree) + '\n \n'
+    #             fittxt += fit_report(pars)
+        
+    #             with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+    #                 f.write(fittxt) 
+
+    #     # Calculate stats 
+    
+    #     if fit_model == 'Hb':
+    
+    #         """
+    #         Only use broad Hb components to calculate stats 
+    #         """
+    
+    #         mod_broad_hb = ConstantModel()
+    
+    #         for i in range(nGaussians):
+    #             mod_broad_hb += GaussianModel(prefix='hb_b_{}_'.format(i))  
+    
+    #         pars_broad_hb = mod_broad_hb.make_params()
+           
+    #         pars_broad_hb['c'].value = 0.0
+           
+    #         for key, value in pars.valuesdict().iteritems():
+    #             if key.startswith('hb_b_'):
+    #                 pars_broad_hb[key].value = value 
+                    
+    
+    #         integrand = lambda x: mod_broad_hb.eval(params=pars_broad_hb, x=np.array(x))
+    
+    #     elif fit_model == 'Ha':
+    
+    #         """
+    #         Only use broad Hb components to calculate stats 
+    #         """
+    
+    #         mod_broad_ha = ConstantModel()
+    
+    #         for i in range(nGaussians):
+    #             mod_broad_ha += GaussianModel(prefix='ha_b_{}_'.format(i))  
+    
+    #         pars_broad_ha = mod_broad_ha.make_params()
+           
+    #         pars_broad_ha['c'].value = 0.0
+           
+    #         for key, value in pars.valuesdict().iteritems():
+    #             if key.startswith('ha_b_'):
+    #                 pars_broad_ha[key].value = value 
+                    
+    
+    #         integrand = lambda x: mod_broad_ha.eval(params=pars_broad_ha, x=np.array(x))    
+    
+    #     else:
+    
+    #         integrand = lambda x: mod.eval(params=pars, x=np.array(x))
+    
+    #     # Calculate FWHM of distribution
+    #     if line_region.unit == u.AA:
+    #         line_region = wave2doppler(line_region, w0)
+    
+    #     dv = 1.0 # i think if this was anything else might need to change intergration.
+    #     xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
+    
+    #     norm = np.sum(integrand(xs) * dv)
+    #     pdf = integrand(xs) / norm
+    #     cdf = np.cumsum(pdf)
+    #     cdf_r = np.cumsum(pdf[::-1])[::-1] # reverse cumsum
+
+    #     # max of line
+    #     peak_flux = np.max(integrand(xs)) / spec_norm
+    
+    #     func_center = xs[np.argmax(pdf)] 
+       
+    #     half_max = np.max(pdf) / 2.0
+    
+    #     i = 0
+    #     while pdf[i] < half_max:
+    #         i+=1
+    
+    #     root1 = xs[i]
+    
+    #     i = 0
+    #     while pdf[-i] < half_max:
+    #         i+=1
+    
+    #     root2 = xs[-i]
+    
+    #     md = xs[np.argmin( np.abs( cdf - 0.5))]
+     
+    #     m = np.sum(xs * pdf * dv)
+    
+    #     v = np.sum( (xs-m)**2 * pdf * dv )
+    #     sd = np.sqrt(v)
+    
+    #     # Equivalent width
+    #     flux_line = integrand(xs)
+    #     xs_wav = doppler2wave(xs*xscale*(u.km/u.s), w0)
+     
+    #     if subtract_fe is True:
+    #         flux_bkgd = resid(params=bkgdpars[k], 
+    #                           x=xs_wav.value, 
+    #                           model=bkgdmod,
+    #                           sp_fe=sp_fe)
+        
+    #     if subtract_fe is False:
+
+    #         bkgdmod = Model(PLModel, 
+    #                         param_names=['amplitude','exponent'], 
+    #                         independent_vars=['x']) 
+
+    #         flux_bkgd = resid(params=bkgdpars[k], 
+    #                           x=xs_wav.value, 
+    #                           model=bkgdmod)
         
     
     
-        f = (flux_line + flux_bkgd) / flux_bkgd
-        eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
-        eqw = np.nansum(eqw)
+    #     f = (flux_line + flux_bkgd) / flux_bkgd
+    #     eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
+    #     eqw = np.nansum(eqw)
     
-        # Broad luminosity
-        broad_lum = np.sum(integrand(xs)[:-1] * np.diff(xs_wav.value)) * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm 
+    #     # Broad luminosity
+    #     lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)        
+    #     broad_lum = np.sum(integrand(xs)[:-1] * np.diff(xs_wav.value)) * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm 
     
-        if fit_model == 'Ha':       
+    #     if fit_model == 'Ha':       
             
-            # I know that the Gaussians are normalised, so the area is just the amplitude, so surely
-            # I shouldn't have to do this function evaluation. 
+    #         # I know that the Gaussians are normalised, so the area is just the amplitude, so surely
+    #         # I shouldn't have to do this function evaluation. 
     
 
-            # this bit won't work unless nGaussians = 2 
-            broad_fwhm = np.zeros(nGaussians)
+    #         # this bit won't work unless nGaussians = 2 
+    #         broad_fwhm = np.zeros(nGaussians)
 
-            for i in range(nGaussians):   
-                broad_fwhm[i] = np.array(pars['ha_b_{}_fwhm'.format(i)].value)
+    #         for i in range(nGaussians):   
+    #             broad_fwhm[i] = np.array(pars['ha_b_{}_fwhm'.format(i)].value)
 
-            broad_fwhm = np.sort(broad_fwhm)[::-1]
+    #         broad_fwhm = np.sort(broad_fwhm)[::-1]
 
-            if len(broad_fwhm) == 1:
-                broad_fwhm = np.append(broad_fwhm, np.nan)
+    #         if len(broad_fwhm) == 1:
+    #             broad_fwhm = np.append(broad_fwhm, np.nan)
 
-            if len(broad_fwhm) == 2: 
-                broad_fwhm = np.append(broad_fwhm, np.nan)
+    #         if len(broad_fwhm) == 2: 
+    #             broad_fwhm = np.append(broad_fwhm, np.nan)
 
-            narrow_mod = GaussianModel()
-            narrow_pars = narrow_mod.make_params()
-            narrow_pars['amplitude'].value = pars['ha_n_amplitude'].value
-            narrow_pars['sigma'].value = pars['ha_n_sigma'].value 
-            narrow_pars['center'].value = pars['ha_n_center'].value 
+    #         narrow_mod = GaussianModel()
+    #         narrow_pars = narrow_mod.make_params()
+    #         narrow_pars['amplitude'].value = pars['ha_n_amplitude'].value
+    #         narrow_pars['sigma'].value = pars['ha_n_sigma'].value 
+    #         narrow_pars['center'].value = pars['ha_n_center'].value 
     
-            narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
-                        (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+    #         narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
+    #                     (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
     
-            narrow_fwhm = pars['ha_n_fwhm'].value 
-            narrow_voff = pars['ha_n_center'].value 
+    #         narrow_fwhm = pars['ha_n_fwhm'].value 
+    #         narrow_voff = pars['ha_n_center'].value 
     
-            oiii_5007_eqw = np.nan 
-            oiii_5007_lum = np.nan * (u.erg / u.s)
-            oiii_5007_n_lum = np.nan * (u.erg / u.s)
-            oiii_5007_b_lum = np.nan * (u.erg / u.s)
-            oiii_5007_fwhm = np.nan
-            oiii_5007_n_fwhm = np.nan 
-            oiii_5007_b_fwhm = np.nan 
-            oiii_5007_b_voff = np.nan 
+    #         oiii_5007_eqw = np.nan 
+    #         oiii_5007_lum = np.nan * (u.erg / u.s)
+    #         oiii_5007_n_lum = np.nan * (u.erg / u.s)
+    #         oiii_5007_b_lum = np.nan * (u.erg / u.s)
+    #         oiii_5007_fwhm = np.nan
+    #         oiii_5007_n_fwhm = np.nan 
+    #         oiii_5007_b_fwhm = np.nan 
+    #         oiii_5007_b_voff = np.nan 
     
-            #######################################################################
-            """
-            Nicely print out important fitting info
-            """     
+    #         #######################################################################
+    #         """
+    #         Nicely print out important fitting info
+    #         """     
             
-            if verbose: 
+    #         if verbose: 
 
-                if n_samples == 1: 
-                    if pars['ha_n_sigma'].vary is True:
-                        print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['ha_n_sigma'].value * 2.35, 
-                                                                                                                          pars['ha_n_sigma'].init_value * 2.35, 
-                                                                                                                          pars['ha_n_sigma'].vary, 
-                                                                                                                          pars['ha_n_sigma'].min * 2.35, 
-                                                                                                                          pars['ha_n_sigma'].max * 2.35) 
-                    else:
-                        print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(pars['ha_n_sigma'].value * 2.35, 
-                                                                         pars['ha_n_sigma'].vary) 
+    #             if n_samples == 1: 
+    #                 if pars['ha_n_sigma'].vary is True:
+    #                     print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['ha_n_sigma'].value * 2.35, 
+    #                                                                                                                       pars['ha_n_sigma'].init_value * 2.35, 
+    #                                                                                                                       pars['ha_n_sigma'].vary, 
+    #                                                                                                                       pars['ha_n_sigma'].min * 2.35, 
+    #                                                                                                                       pars['ha_n_sigma'].max * 2.35) 
+    #                 else:
+    #                     print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(pars['ha_n_sigma'].value * 2.35, 
+    #                                                                      pars['ha_n_sigma'].vary) 
             
-                    if pars['ha_n_center'].vary is True:
-                        print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['ha_n_center'].value, 
-                                                                                                                            pars['ha_n_center'].init_value, 
-                                                                                                                            pars['ha_n_center'].vary, 
-                                                                                                                            pars['ha_n_center'].min, 
-                                                                                                                            pars['ha_n_center'].max) 
-                    else:
-                        print 'Narrow Center = {0:.1f}, Vary = {1}'.format(pars['ha_n_center'].value, 
-                                                                         pars['ha_n_center'].vary)     
+    #                 if pars['ha_n_center'].vary is True:
+    #                     print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(pars['ha_n_center'].value, 
+    #                                                                                                                         pars['ha_n_center'].init_value, 
+    #                                                                                                                         pars['ha_n_center'].vary, 
+    #                                                                                                                         pars['ha_n_center'].min, 
+    #                                                                                                                         pars['ha_n_center'].max) 
+    #                 else:
+    #                     print 'Narrow Center = {0:.1f}, Vary = {1}'.format(pars['ha_n_center'].value, 
+    #                                                                      pars['ha_n_center'].vary)     
                                                                      
                                                                      
                                                             
     
     
     
-        elif fit_model == 'Hb':    
+    #     elif fit_model == 'Hb':    
 
-            # this bit won't work unless nGaussians = 2 
-            broad_fwhm = np.zeros(nGaussians)
+    #         # this bit won't work unless nGaussians = 2 
+    #         broad_fwhm = np.zeros(nGaussians)
 
-            for i in range(nGaussians):   
-                broad_fwhm[i] = np.array(pars['hb_b_{}_fwhm'.format(i)].value)
+    #         for i in range(nGaussians):   
+    #             broad_fwhm[i] = np.array(pars['hb_b_{}_fwhm'.format(i)].value)
 
-            broad_fwhm = np.sort(broad_fwhm)[::-1]
+    #         broad_fwhm = np.sort(broad_fwhm)[::-1]
 
-            if len(broad_fwhm) == 1:
-                broad_fwhm = np.append(broad_fwhm, np.nan)
+    #         if len(broad_fwhm) == 1:
+    #             broad_fwhm = np.append(broad_fwhm, np.nan)
 
-            if len(broad_fwhm) == 2:
-                broad_fwhm = np.append(broad_fwhm, np.nan)
+    #         if len(broad_fwhm) == 2:
+    #             broad_fwhm = np.append(broad_fwhm, np.nan)
      
-            oiii_5007_b_mod = GaussianModel()
-            oiii_5007_b_pars = oiii_5007_b_mod.make_params() 
+    #         oiii_5007_b_mod = GaussianModel()
+    #         oiii_5007_b_pars = oiii_5007_b_mod.make_params() 
     
-            oiii_5007_b_pars['amplitude'].value = pars['oiii_5007_b_amplitude'].value
-            oiii_5007_b_pars['sigma'].value = pars['oiii_5007_b_sigma'].value 
-            oiii_5007_b_pars['center'].value = pars['oiii_5007_b_center'].value 
+    #         oiii_5007_b_pars['amplitude'].value = pars['oiii_5007_b_amplitude'].value
+    #         oiii_5007_b_pars['sigma'].value = pars['oiii_5007_b_sigma'].value 
+    #         oiii_5007_b_pars['center'].value = pars['oiii_5007_b_center'].value 
     
-            oiii_5007_b_xs = np.arange(oiii_5007_b_pars['center'].value - 10000.0, 
-                                       oiii_5007_b_pars['center'].value + 10000.0, 
-                                       dv)
+    #         oiii_5007_b_xs = np.arange(oiii_5007_b_pars['center'].value - 10000.0, 
+    #                                    oiii_5007_b_pars['center'].value + 10000.0, 
+    #                                    dv)
     
-            oiii_5007_b_xs_wav = doppler2wave(oiii_5007_b_xs*(u.km/u.s), w0) 
-    
-    
-            oiii_5007_b_lum = np.sum(oiii_5007_b_mod.eval(params=oiii_5007_b_pars, x=oiii_5007_b_xs)[:-1] * np.diff(oiii_5007_b_xs_wav.value)) * \
-                        (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
-    
-            oiii_5007_b_fwhm = oiii_5007_b_pars['sigma'].value * 2.35 
-    
-            oiii_5007_b_voff = oiii_5007_b_pars['center'].value - wave2doppler(5008.239*u.AA, w0).value
-    
-            oiii_5007_n_mod = GaussianModel()
-            oiii_5007_n_pars = oiii_5007_n_mod.make_params() 
-    
-            oiii_5007_n_pars['amplitude'].value = pars['oiii_5007_n_amplitude'].value
-            oiii_5007_n_pars['sigma'].value = pars['oiii_5007_n_sigma'].value 
-            oiii_5007_n_pars['center'].value = pars['oiii_5007_n_center'].value 
-    
-            oiii_5007_n_xs = np.arange(oiii_5007_n_pars['center'].value - 10000.0, 
-                                       oiii_5007_n_pars['center'].value + 10000.0, 
-                                       dv)
-    
-            oiii_5007_n_xs_wav = doppler2wave(oiii_5007_n_xs*(u.km/u.s), w0) 
+    #         oiii_5007_b_xs_wav = doppler2wave(oiii_5007_b_xs*(u.km/u.s), w0) 
     
     
-            oiii_5007_n_lum = np.sum(oiii_5007_n_mod.eval(params=oiii_5007_n_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
-                        (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+    #         oiii_5007_b_lum = np.sum(oiii_5007_b_mod.eval(params=oiii_5007_b_pars, x=oiii_5007_b_xs)[:-1] * np.diff(oiii_5007_b_xs_wav.value)) * \
+    #                     (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
     
-            oiii_5007_n_fwhm = oiii_5007_n_pars['sigma'].value * 2.35 
+    #         oiii_5007_b_fwhm = oiii_5007_b_pars['sigma'].value * 2.35 
+    
+    #         oiii_5007_b_voff = oiii_5007_b_pars['center'].value - wave2doppler(5008.239*u.AA, w0).value
+    
+    #         oiii_5007_n_mod = GaussianModel()
+    #         oiii_5007_n_pars = oiii_5007_n_mod.make_params() 
+    
+    #         oiii_5007_n_pars['amplitude'].value = pars['oiii_5007_n_amplitude'].value
+    #         oiii_5007_n_pars['sigma'].value = pars['oiii_5007_n_sigma'].value 
+    #         oiii_5007_n_pars['center'].value = pars['oiii_5007_n_center'].value 
+    
+    #         oiii_5007_n_xs = np.arange(oiii_5007_n_pars['center'].value - 10000.0, 
+    #                                    oiii_5007_n_pars['center'].value + 10000.0, 
+    #                                    dv)
+    
+    #         oiii_5007_n_xs_wav = doppler2wave(oiii_5007_n_xs*(u.km/u.s), w0) 
+    
+    
+    #         oiii_5007_n_lum = np.sum(oiii_5007_n_mod.eval(params=oiii_5007_n_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
+    #                     (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+    
+    #         oiii_5007_n_fwhm = oiii_5007_n_pars['sigma'].value * 2.35 
                
-            oiii_5007_mod = GaussianModel(prefix='oiii_5007_n_') + GaussianModel(prefix='oiii_5007_b_')
-            oiii_5007_pars = oiii_5007_mod.make_params() 
+    #         oiii_5007_mod = GaussianModel(prefix='oiii_5007_n_') + GaussianModel(prefix='oiii_5007_b_')
+    #         oiii_5007_pars = oiii_5007_mod.make_params() 
     
-            oiii_5007_pars['oiii_5007_n_amplitude'].value = pars['oiii_5007_n_amplitude'].value
-            oiii_5007_pars['oiii_5007_n_sigma'].value = pars['oiii_5007_n_sigma'].value 
-            oiii_5007_pars['oiii_5007_n_center'].value = pars['oiii_5007_n_center'].value 
-            oiii_5007_pars['oiii_5007_b_amplitude'].value = pars['oiii_5007_b_amplitude'].value
-            oiii_5007_pars['oiii_5007_b_sigma'].value = pars['oiii_5007_b_sigma'].value 
-            oiii_5007_pars['oiii_5007_b_center'].value = pars['oiii_5007_b_center'].value 
-    
-    
-            flux_line = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
+    #         oiii_5007_pars['oiii_5007_n_amplitude'].value = pars['oiii_5007_n_amplitude'].value
+    #         oiii_5007_pars['oiii_5007_n_sigma'].value = pars['oiii_5007_n_sigma'].value 
+    #         oiii_5007_pars['oiii_5007_n_center'].value = pars['oiii_5007_n_center'].value 
+    #         oiii_5007_pars['oiii_5007_b_amplitude'].value = pars['oiii_5007_b_amplitude'].value
+    #         oiii_5007_pars['oiii_5007_b_sigma'].value = pars['oiii_5007_b_sigma'].value 
+    #         oiii_5007_pars['oiii_5007_b_center'].value = pars['oiii_5007_b_center'].value 
     
     
-            if subtract_fe is True:
-                flux_bkgd = resid(params=bkgdpars, 
-                                  x=oiii_5007_n_xs_wav.value, 
-                                  model=bkgdmod,
-                                  sp_fe=sp_fe)
+    #         flux_line = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
+    
+    
+    #         if subtract_fe is True:
+    #             flux_bkgd = resid(params=bkgdpars[k], 
+    #                               x=oiii_5007_n_xs_wav.value, 
+    #                               model=bkgdmod,
+    #                               sp_fe=sp_fe)
         
-            if subtract_fe is False:
-                flux_bkgd = resid(params=bkgdpars, 
-                                  x=oiii_5007_n_xs_wav.value, 
-                                  model=bkgdmod)
+    #         if subtract_fe is False:
+    #             flux_bkgd = resid(params=bkgdpars[k], 
+    #                               x=oiii_5007_n_xs_wav.value, 
+    #                               model=bkgdmod)
     
-            f = (flux_line + flux_bkgd) / flux_bkgd 
-            oiii_5007_eqw = (f[:-1] - 1.0) * np.diff(oiii_5007_n_xs_wav.value)
-            oiii_5007_eqw = np.nansum(oiii_5007_eqw)
+    #         f = (flux_line + flux_bkgd) / flux_bkgd 
+    #         oiii_5007_eqw = (f[:-1] - 1.0) * np.diff(oiii_5007_n_xs_wav.value)
+    #         oiii_5007_eqw = np.nansum(oiii_5007_eqw)
     
-            oiii_5007_lum = np.sum(oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
-                        (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
+    #         oiii_5007_lum = np.sum(oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
+    #                     (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
     
-            oiii_5007_pdf = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
-            half_max = np.max(oiii_5007_pdf) / 2.0
+    #         oiii_5007_pdf = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
+    #         half_max = np.max(oiii_5007_pdf) / 2.0
         
-            i = 0
-            while oiii_5007_pdf[i] < half_max:
-                i+=1
+    #         i = 0
+    #         while oiii_5007_pdf[i] < half_max:
+    #             i+=1
         
-            oiii_5007_root1 = oiii_5007_n_xs[i]
+    #         oiii_5007_root1 = oiii_5007_n_xs[i]
         
-            i = 0
-            while oiii_5007_pdf[-i] < half_max:
-                i+=1
+    #         i = 0
+    #         while oiii_5007_pdf[-i] < half_max:
+    #             i+=1
         
-            oiii_5007_root2 = oiii_5007_n_xs[-i]
+    #         oiii_5007_root2 = oiii_5007_n_xs[-i]
             
-            oiii_5007_fwhm = oiii_5007_root2 - oiii_5007_root1
+    #         oiii_5007_fwhm = oiii_5007_root2 - oiii_5007_root1
     
-            narrow_fwhm = pars['oiii_5007_n_sigma'].value * 2.35 
-            narrow_voff = pars['oiii_5007_n_center'].value  - wave2doppler(5008.239*u.AA, w0).value  
+    #         narrow_fwhm = pars['oiii_5007_n_sigma'].value * 2.35 
+    #         narrow_voff = pars['oiii_5007_n_center'].value  - wave2doppler(5008.239*u.AA, w0).value  
              
-            if hb_narrow is True:
+    #         if hb_narrow is True:
     
-                narrow_mod = GaussianModel()
-                narrow_pars = narrow_mod.make_params()
-                narrow_pars['amplitude'].value = pars['hb_n_amplitude'].value
-                narrow_pars['sigma'].value = pars['hb_n_sigma'].value 
-                narrow_pars['center'].value = pars['hb_n_center'].value 
+    #             narrow_mod = GaussianModel()
+    #             narrow_pars = narrow_mod.make_params()
+    #             narrow_pars['amplitude'].value = pars['hb_n_amplitude'].value
+    #             narrow_pars['sigma'].value = pars['hb_n_sigma'].value 
+    #             narrow_pars['center'].value = pars['hb_n_center'].value 
     
-                narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
-                            (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm
+    #             narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
+    #                         (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm
     
             
-                #######################################################################
-                """
-                Nicely print out important fitting info
-                """     
+    #             #######################################################################
+    #             """
+    #             Nicely print out important fitting info
+    #             """     
                 
-                if verbose: 
+    #             if verbose: 
 
-                    if n_samples == 1:
+    #                 if n_samples == 1:
     
-                        if pars['oiii_5007_n_sigma'].vary is True:
+    #                     if pars['oiii_5007_n_sigma'].vary is True:
         
         
-                            print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(pars['hb_n_sigma'].value * 2.35, 
-                                                                                                                  pars['hb_n_sigma'].init_value * 2.35, 
-                                                                                                                  pars['hb_n_sigma'].min * 2.35, 
-                                                                                                                  pars['hb_n_sigma'].max * 2.35) 
-                        else:
-                            print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(pars['hb_n_sigma'].value * 2.35, 
-                                                                             pars['oiii_5007_n_sigma'].vary) 
+    #                         print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(pars['hb_n_sigma'].value * 2.35, 
+    #                                                                                                               pars['hb_n_sigma'].init_value * 2.35, 
+    #                                                                                                               pars['hb_n_sigma'].min * 2.35, 
+    #                                                                                                               pars['hb_n_sigma'].max * 2.35) 
+    #                     else:
+    #                         print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(pars['hb_n_sigma'].value * 2.35, 
+    #                                                                          pars['oiii_5007_n_sigma'].vary) 
                 
-                        if pars['oiii_5007_n_center'].vary is True:
-                            print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(pars['hb_n_center'].value, 
-                                                                                                                                pars['hb_n_center'].init_value, 
-                                                                                                                                pars['hb_n_center'].min, 
-                                                                                                                                pars['hb_n_center'].max) 
-                        else:
-                            print 'Narrow Center = {0:.1f}, Vary = {1}'.format(pars['hb_n_center'].value, 
-                                                                               pars['oiii_5007_n_center'].vary)     
+    #                     if pars['oiii_5007_n_center'].vary is True:
+    #                         print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(pars['hb_n_center'].value, 
+    #                                                                                                                             pars['hb_n_center'].init_value, 
+    #                                                                                                                             pars['hb_n_center'].min, 
+    #                                                                                                                             pars['hb_n_center'].max) 
+    #                     else:
+    #                         print 'Narrow Center = {0:.1f}, Vary = {1}'.format(pars['hb_n_center'].value, 
+    #                                                                            pars['oiii_5007_n_center'].vary)     
     
-            else:
+    #         else:
     
-                narrow_lum = np.nan * (u.erg / u.s)          
+    #             narrow_lum = np.nan * (u.erg / u.s)          
     
-        elif fit_model == 'GaussHermite':
+    #     elif fit_model == 'GaussHermite':
           
-            narrow_lum = np.nan * (u.erg / u.s)
-            narrow_fwhm = np.nan 
-            narrow_voff = np.nan 
-            oiii_5007_eqw = np.nan 
-            oiii_5007_lum = np.nan * (u.erg / u.s)
-            oiii_5007_n_lum = np.nan * (u.erg / u.s)
-            oiii_5007_b_lum = np.nan * (u.erg / u.s)
-            oiii_5007_fwhm = np.nan 
-            oiii_5007_n_fwhm = np.nan 
-            oiii_5007_b_fwhm = np.nan 
-            oiii_5007_b_voff = np.nan
+    #         narrow_lum = np.nan * (u.erg / u.s)
+    #         narrow_fwhm = np.nan 
+    #         narrow_voff = np.nan 
+    #         oiii_5007_eqw = np.nan 
+    #         oiii_5007_lum = np.nan * (u.erg / u.s)
+    #         oiii_5007_n_lum = np.nan * (u.erg / u.s)
+    #         oiii_5007_b_lum = np.nan * (u.erg / u.s)
+    #         oiii_5007_fwhm = np.nan 
+    #         oiii_5007_n_fwhm = np.nan 
+    #         oiii_5007_b_fwhm = np.nan 
+    #         oiii_5007_b_voff = np.nan
 
-            broad_fwhm = np.repeat(np.nan, 3)
+    #         broad_fwhm = np.repeat(np.nan, 3)
 
-        elif fit_model == 'MultiGauss':
+    #     elif fit_model == 'MultiGauss':
 
-            broad_fwhm = np.zeros(nGaussians)
+    #         broad_fwhm = np.zeros(nGaussians)
 
-            for i in range(nGaussians):   
-                broad_fwhm[i] = np.array(pars['g{}_fwhm'.format(i)].value)
+    #         for i in range(nGaussians):   
+    #             broad_fwhm[i] = np.array(pars['g{}_fwhm'.format(i)].value)
 
-            broad_fwhm = np.sort(broad_fwhm)[::-1]
+    #         broad_fwhm = np.sort(broad_fwhm)[::-1]
 
-            if len(broad_fwhm) == 1:
-                broad_fwhm = np.append(broad_fwhm, np.nan)
+    #         if len(broad_fwhm) == 1:
+    #             broad_fwhm = np.append(broad_fwhm, np.nan)
 
-            if len(broad_fwhm) == 2:
-                broad_fwhm = np.append(broad_fwhm, np.nan)
+    #         if len(broad_fwhm) == 2:
+    #             broad_fwhm = np.append(broad_fwhm, np.nan)
 
-            narrow_lum = np.nan * (u.erg / u.s)
-            narrow_fwhm = np.nan 
-            narrow_voff = np.nan 
-            oiii_5007_eqw = np.nan 
-            oiii_5007_lum = np.nan * (u.erg / u.s)
-            oiii_5007_n_lum = np.nan * (u.erg / u.s)
-            oiii_5007_b_lum = np.nan * (u.erg / u.s)
-            oiii_5007_fwhm = np.nan 
-            oiii_5007_n_fwhm = np.nan 
-            oiii_5007_b_fwhm = np.nan 
-            oiii_5007_b_voff = np.nan
+    #         narrow_lum = np.nan * (u.erg / u.s)
+    #         narrow_fwhm = np.nan 
+    #         narrow_voff = np.nan 
+    #         oiii_5007_eqw = np.nan 
+    #         oiii_5007_lum = np.nan * (u.erg / u.s)
+    #         oiii_5007_n_lum = np.nan * (u.erg / u.s)
+    #         oiii_5007_b_lum = np.nan * (u.erg / u.s)
+    #         oiii_5007_fwhm = np.nan 
+    #         oiii_5007_n_fwhm = np.nan 
+    #         oiii_5007_b_fwhm = np.nan 
+    #         oiii_5007_b_voff = np.nan
 
-
-
-
-
-        fit_out = {'name':plot_title, 
-                   'fwhm':(root2 - root1)*xscale,
-                   'fwhm_1':broad_fwhm[0],
-                   'fwhm_2':broad_fwhm[1],
-                   'fwhm_3':broad_fwhm[2],
-                   'sigma': sd*xscale,
-                   'median': md*xscale,
-                   'cen': func_center*xscale,
-                   'eqw': eqw,
-                   'broad_lum':np.log10(broad_lum.value),
-                   'peak':peak_flux, 
-                   'narrow_fwhm':narrow_fwhm,
-                   'narrow_lum':np.log10(narrow_lum.value) if ~np.isnan(narrow_lum.value) else np.nan,
-                   'narrow_voff':narrow_voff, 
-                   'oiii_5007_eqw':oiii_5007_eqw,
-                   'oiii_5007_lum':np.log10(oiii_5007_lum.value) if ~np.isnan(oiii_5007_lum.value) else np.nan,
-                   'oiii_5007_n_lum':np.log10(oiii_5007_n_lum.value) if ~np.isnan(oiii_5007_n_lum.value) else np.nan,
-                   'oiii_5007_b_lum':np.log10(oiii_5007_b_lum.value) if ~np.isnan(oiii_5007_b_lum.value) else np.nan,
-                   'oiii_fwhm':oiii_5007_fwhm,
-                   'oiii_n_fwhm':oiii_5007_n_fwhm,
-                   'oiii_b_fwhm':oiii_5007_b_fwhm,
-                   'oiii_5007_b_voff':oiii_5007_b_voff,
-                   'redchi':out.redchi,
-                   'snr':snr[0],
-                   'dv':spec_dv, 
-                   'monolum':np.log10(mono_lum.value),
-                   'fe_ew':eqw_fe}
+    #     fit_out = {'name':plot_title, 
+    #                'fwhm':(root2 - root1)*xscale,
+    #                'fwhm_1':broad_fwhm[0],
+    #                'fwhm_2':broad_fwhm[1],
+    #                'fwhm_3':broad_fwhm[2],
+    #                'sigma': sd*xscale,
+    #                'median': md*xscale,
+    #                'cen': func_center*xscale,
+    #                'eqw': eqw,
+    #                'broad_lum':np.log10(broad_lum.value),
+    #                'peak':peak_flux, 
+    #                'narrow_fwhm':narrow_fwhm,
+    #                'narrow_lum':np.log10(narrow_lum.value) if ~np.isnan(narrow_lum.value) else np.nan,
+    #                'narrow_voff':narrow_voff, 
+    #                'oiii_5007_eqw':oiii_5007_eqw,
+    #                'oiii_5007_lum':np.log10(oiii_5007_lum.value) if ~np.isnan(oiii_5007_lum.value) else np.nan,
+    #                'oiii_5007_n_lum':np.log10(oiii_5007_n_lum.value) if ~np.isnan(oiii_5007_n_lum.value) else np.nan,
+    #                'oiii_5007_b_lum':np.log10(oiii_5007_b_lum.value) if ~np.isnan(oiii_5007_b_lum.value) else np.nan,
+    #                'oiii_fwhm':oiii_5007_fwhm,
+    #                'oiii_n_fwhm':oiii_5007_n_fwhm,
+    #                'oiii_b_fwhm':oiii_5007_b_fwhm,
+    #                'oiii_5007_b_voff':oiii_5007_b_voff,
+    #                'redchi':out.redchi,
+    #                'snr':snr[k],
+    #                'dv':spec_dv, 
+    #                'monolum':np.log10(mono_lum[k]),
+    #                'fe_ew':eqw_fe[k]}
         
-        if n_samples == 1: 
+    #     if n_samples == 1: 
 
-            if verbose:
+    #         if verbose:
 
-                print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum.value)) 
+    #             print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum.value)) 
             
     
-                print  fit_out['name'] + '\n'\
-                      'Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm']), \
-                      'Narrow Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_1']), \
-                      'Very Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_2']), \
-                      'Broad sigma: {0:.2f} km/s \n'.format(fit_out['sigma']), \
-                      'Broad median: {0:.2f} km/s \n'.format(fit_out['median']), \
-                      'Broad centroid: {0:.2f} km/s \n'.format(fit_out['cen']), \
-                      'Broad EQW: {0:.2f} A \n'.format(fit_out['eqw']), \
-                      'Broad luminosity {0:.2f} erg/s \n'.format(fit_out['broad_lum']), \
-                      'Broad peak {0:.2e} erg/s \n'.format(fit_out['peak']), \
-                      'Narrow FWHM: {0:.2f} km/s \n'.format(fit_out['narrow_fwhm']), \
-                      'Narrow luminosity: {0:.2f} km/s \n'.format(fit_out['narrow_lum']), \
-                      'Narrow velocity: {0:.2f} km/s \n'.format(fit_out['narrow_voff']), \
-                      'OIII5007 EQW: {0:.2f} A \n'.format(fit_out['oiii_5007_eqw']),\
-                      'OIII5007 luminosity {0:.2f} erg/s \n'.format(fit_out['oiii_5007_lum']),\
-                      'OIII5007 narrow luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_n_lum']),\
-                      'OIII5007 broad luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_b_lum']),\
-                      'OIII5007 FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_fwhm']),\
-                      'OIII5007 narrow FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_n_fwhm']),\
-                      'OIII5007 broad FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_b_fwhm']),\
-                      'OIII5007 broad velocity: {0:.2f} km/s \n'.format(fit_out['oiii_5007_b_voff']),\
-                      'Reduced chi-squared: {0:.2f} \n'.format(fit_out['redchi']),\
-                      'S/N: {0:.2f} \n'.format(fit_out['snr']), \
-                      'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
-                      'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])
+    #             print  fit_out['name'] + '\n'\
+    #                   'Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm']), \
+    #                   'Narrow Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_1']), \
+    #                   'Very Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_2']), \
+    #                   'Broad sigma: {0:.2f} km/s \n'.format(fit_out['sigma']), \
+    #                   'Broad median: {0:.2f} km/s \n'.format(fit_out['median']), \
+    #                   'Broad centroid: {0:.2f} km/s \n'.format(fit_out['cen']), \
+    #                   'Broad EQW: {0:.2f} A \n'.format(fit_out['eqw']), \
+    #                   'Broad luminosity {0:.2f} erg/s \n'.format(fit_out['broad_lum']), \
+    #                   'Broad peak {0:.2e} erg/s \n'.format(fit_out['peak']), \
+    #                   'Narrow FWHM: {0:.2f} km/s \n'.format(fit_out['narrow_fwhm']), \
+    #                   'Narrow luminosity: {0:.2f} km/s \n'.format(fit_out['narrow_lum']), \
+    #                   'Narrow velocity: {0:.2f} km/s \n'.format(fit_out['narrow_voff']), \
+    #                   'OIII5007 EQW: {0:.2f} A \n'.format(fit_out['oiii_5007_eqw']),\
+    #                   'OIII5007 luminosity {0:.2f} erg/s \n'.format(fit_out['oiii_5007_lum']),\
+    #                   'OIII5007 narrow luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_n_lum']),\
+    #                   'OIII5007 broad luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_b_lum']),\
+    #                   'OIII5007 FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_fwhm']),\
+    #                   'OIII5007 narrow FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_n_fwhm']),\
+    #                   'OIII5007 broad FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_b_fwhm']),\
+    #                   'OIII5007 broad velocity: {0:.2f} km/s \n'.format(fit_out['oiii_5007_b_voff']),\
+    #                   'Reduced chi-squared: {0:.2f} \n'.format(fit_out['redchi']),\
+    #                   'S/N: {0:.2f} \n'.format(fit_out['snr']), \
+    #                   'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
+    #                   'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])
         
-                if emission_line == 'Hb':
+    #             if emission_line == 'Hb':
 
-                    print fit_out['name'] + ',',\
-                    format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
-                    format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
-                    format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
-                    format(fit_out['fwhm_3'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_3']) else ',',\
-                    format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
-                    format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
-                    format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
-                    format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
-                    format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
-                    format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
-                    format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
-                    format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
-                    format(fit_out['oiii_5007_eqw'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_eqw']) else ',',\
-                    format(fit_out['oiii_5007_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_lum']) else ',',\
-                    format(fit_out['oiii_5007_n_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_n_lum']) else ',',\
-                    format(fit_out['oiii_5007_b_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_lum']) else ',',\
-                    format(fit_out['oiii_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_fwhm']) else ',',\
-                    format(fit_out['oiii_n_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_n_fwhm']) else ',',\
-                    format(fit_out['oiii_b_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_b_fwhm']) else ',',\
-                    format(fit_out['oiii_5007_b_voff'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_voff']) else ',',\
-                    format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
+    #                 print fit_out['name'] + ',',\
+    #                 format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+    #                 format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
+    #                 format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
+    #                 format(fit_out['fwhm_3'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_3']) else ',',\
+    #                 format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
+    #                 format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
+    #                 format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
+    #                 format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
+    #                 format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+    #                 format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
+    #                 format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
+    #                 format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
+    #                 format(fit_out['oiii_5007_eqw'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_eqw']) else ',',\
+    #                 format(fit_out['oiii_5007_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_lum']) else ',',\
+    #                 format(fit_out['oiii_5007_n_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_n_lum']) else ',',\
+    #                 format(fit_out['oiii_5007_b_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_lum']) else ',',\
+    #                 format(fit_out['oiii_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_fwhm']) else ',',\
+    #                 format(fit_out['oiii_n_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_n_fwhm']) else ',',\
+    #                 format(fit_out['oiii_b_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_b_fwhm']) else ',',\
+    #                 format(fit_out['oiii_5007_b_voff'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_voff']) else ',',\
+    #                 format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
 
 
-                    # print  fit_out['name'] + ','\
-                    #       '{0:.2f},'.format(fit_out['fwhm']), \
-                    #       '{0:.2f},'.format(fit_out['sigma']), \
-                    #       '{0:.2f},'.format(fit_out['median']), \
-                    #       '{0:.2f},'.format(fit_out['cen']), \
-                    #       '{0:.2f},'.format(fit_out['eqw']), \
-                    #       '{0:.2f},'.format(fit_out['broad_lum']), \
-                    #       '{0:.2f},'.format(fit_out['narrow_fwhm']), \
-                    #       '{0:.2f},'.format(fit_out['narrow_lum']), \
-                    #       '{0:.2f},'.format(fit_out['narrow_voff']), \
-                    #       '{0:.2f},'.format(fit_out['oiii_5007_eqw']),\
-                    #       '{0:.2f},'.format(fit_out['oiii_5007_lum']),\
-                    #       '{0:.2f},'.format(fit_out['oiii_5007_n_lum']),\
-                    #       '{0:.2f},'.format(fit_out['oiii_5007_b_lum']),\
-                    #       '{0:.2f},'.format(fit_out['oiii_fwhm']),\
-                    #       '{0:.2f},'.format(fit_out['oiii_n_fwhm']),\
-                    #       '{0:.2f},'.format(fit_out['oiii_b_fwhm']),\
-                    #       '{0:.2f},'.format(fit_out['oiii_5007_b_voff']),\
-                    #       '{0:.2f}'.format(fit_out['redchi'])          
+    #                 # print  fit_out['name'] + ','\
+    #                 #       '{0:.2f},'.format(fit_out['fwhm']), \
+    #                 #       '{0:.2f},'.format(fit_out['sigma']), \
+    #                 #       '{0:.2f},'.format(fit_out['median']), \
+    #                 #       '{0:.2f},'.format(fit_out['cen']), \
+    #                 #       '{0:.2f},'.format(fit_out['eqw']), \
+    #                 #       '{0:.2f},'.format(fit_out['broad_lum']), \
+    #                 #       '{0:.2f},'.format(fit_out['narrow_fwhm']), \
+    #                 #       '{0:.2f},'.format(fit_out['narrow_lum']), \
+    #                 #       '{0:.2f},'.format(fit_out['narrow_voff']), \
+    #                 #       '{0:.2f},'.format(fit_out['oiii_5007_eqw']),\
+    #                 #       '{0:.2f},'.format(fit_out['oiii_5007_lum']),\
+    #                 #       '{0:.2f},'.format(fit_out['oiii_5007_n_lum']),\
+    #                 #       '{0:.2f},'.format(fit_out['oiii_5007_b_lum']),\
+    #                 #       '{0:.2f},'.format(fit_out['oiii_fwhm']),\
+    #                 #       '{0:.2f},'.format(fit_out['oiii_n_fwhm']),\
+    #                 #       '{0:.2f},'.format(fit_out['oiii_b_fwhm']),\
+    #                 #       '{0:.2f},'.format(fit_out['oiii_5007_b_voff']),\
+    #                 #       '{0:.2f}'.format(fit_out['redchi'])          
         
-                elif emission_line == 'Ha':
+    #             elif emission_line == 'Ha':
 
-                    print fit_out['name'] + ',',\
-                    format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
-                    format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
-                    format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
-                    format(fit_out['fwhm_3'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_3']) else ',',\
-                    format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
-                    format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
-                    format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
-                    format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
-                    format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
-                    format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
-                    format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
-                    format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
-                    format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
+    #                 print fit_out['name'] + ',',\
+    #                 format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+    #                 format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
+    #                 format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
+    #                 format(fit_out['fwhm_3'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_3']) else ',',\
+    #                 format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
+    #                 format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
+    #                 format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
+    #                 format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
+    #                 format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+    #                 format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
+    #                 format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
+    #                 format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
+    #                 format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
 
-                else: 
+    #             else: 
 
-                    print fit_out['name'] + ',',\
-                    format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
-                    format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
-                    format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
-                    format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
-                    format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
-                    format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
-                    format(fit_out['peak'], '.2e') + ',' if ~np.isnan(fit_out['peak']) else ',',\
-                    format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
+    #                 print fit_out['name'] + ',',\
+    #                 format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+    #                 format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
+    #                 format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
+    #                 format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
+    #                 format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
+    #                 format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+    #                 format(fit_out['peak'], '.2e') + ',' if ~np.isnan(fit_out['peak']) else ',',\
+    #                 format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
 
         
         
-            if save_dir is not None:
+    #         if save_dir is not None:
         
-                with open(os.path.join(save_dir, 'fit.txt'), 'a') as f:
+    #             with open(os.path.join(save_dir, 'fit.txt'), 'a') as f:
 
-                    f.write('\n \n')
-                    f.write('Peak: {0:.2f} km/s \n'.format(func_center))
-                    f.write('FWHM: {0:.2f} km/s \n'.format(root2 - root1))
-                    f.write('Median: {0:.2f} km/s \n'.format(md))
-                    f.write('Sigma: {0:.2f} km/s \n'.format(sd))
-                    f.write('Reduced chi-squared: {0:.2f} \n'.format(out.redchi))
-                    f.write('EQW: {0:.2f} A \n'.format(eqw))      
+    #                 f.write('\n \n')
+    #                 f.write('Peak: {0:.2f} km/s \n'.format(func_center))
+    #                 f.write('FWHM: {0:.2f} km/s \n'.format(root2 - root1))
+    #                 f.write('Median: {0:.2f} km/s \n'.format(md))
+    #                 f.write('Sigma: {0:.2f} km/s \n'.format(sd))
+    #                 f.write('Reduced chi-squared: {0:.2f} \n'.format(out.redchi))
+    #                 f.write('EQW: {0:.2f} A \n'.format(eqw))      
         
-                my_line_props = line_props(plot_title, func_center, root2 - root1, md, sd, out.redchi, eqw)  
-                param_file = os.path.join(save_dir, 'line_props.txt')
-                parfile = open(param_file, 'w')
-                pickle.dump(my_line_props, parfile, -1)
-                parfile.close()
+    #             my_line_props = line_props(plot_title, func_center, root2 - root1, md, sd, out.redchi, eqw)  
+    #             param_file = os.path.join(save_dir, 'line_props.txt')
+    #             parfile = open(param_file, 'w')
+    #             pickle.dump(my_line_props, parfile, -1)
+    #             parfile.close()
               
         
         
-            if plot is True:
+    #         if plot is True:
         
-                if subtract_fe is True:
-                    flux_plot = flux - resid(params=bkgdpars, 
-                                             x=wav.value, 
-                                             model=bkgdmod,
-                                             sp_fe=sp_fe)
+    #             if subtract_fe is True:
+    #                 flux_plot = flux - resid(params=bkgdpars, 
+    #                                          x=wav.value, 
+    #                                          model=bkgdmod,
+    #                                          sp_fe=sp_fe)
                 
-                if subtract_fe is False:
-                    flux_plot = flux - resid(params=bkgdpars, 
-                                             x=wav.value, 
-                                             model=bkgdmod)
+    #             if subtract_fe is False:
+    #                 flux_plot = flux - resid(params=bkgdpars, 
+    #                                          x=wav.value, 
+    #                                          model=bkgdmod)
         
-                plot_fit(wav=wav,
-                         flux = flux_plot,
-                         err=err,
-                         pars=pars,
-                         mod=mod,
-                         out=out,
-                         plot_savefig = plot_savefig,
-                         save_dir = save_dir,
-                         maskout = maskout,
-                         z=z,
-                         w0=w0,
-                         continuum_region=continuum_region,
-                         fitting_region=fitting_region,
-                         plot_region=plot_region,
-                         plot_title=plot_title,
-                         line_region=line_region,
-                         mask_negflux = mask_negflux,
-                         fit_model=fit_model,
-                         hb_narrow=hb_narrow,
-                         verbose=verbose,
-                         reject_outliers=reject_outliers,  
-                         reject_width=reject_width,
-                         reject_sigma=reject_sigma,
-                         gh_order = gh_order,
-                         xscale=xscale)
+    #             plot_fit(wav=wav,
+    #                      flux = flux_plot,
+    #                      err=err,
+    #                      pars=pars,
+    #                      mod=mod,
+    #                      out=out,
+    #                      plot_savefig = plot_savefig,
+    #                      save_dir = save_dir,
+    #                      maskout = maskout,
+    #                      z=z,
+    #                      w0=w0,
+    #                      continuum_region=continuum_region,
+    #                      fitting_region=fitting_region,
+    #                      plot_region=plot_region,
+    #                      plot_title=plot_title,
+    #                      line_region=line_region,
+    #                      mask_negflux = mask_negflux,
+    #                      fit_model=fit_model,
+    #                      hb_narrow=hb_narrow,
+    #                      verbose=verbose,
+    #                      reject_outliers=reject_outliers,  
+    #                      reject_width=reject_width,
+    #                      reject_sigma=reject_sigma,
+    #                      gh_order = gh_order,
+    #                      xscale=xscale)
         
-                plot_fit_d3(wav=wav,
-                            flux = flux_plot,
-                            err=err,
-                            pars=pars,
-                            mod=mod,
-                            out=out,
-                            plot_savefig = plot_savefig,
-                            save_dir = save_dir,
-                            maskout = maskout,
-                            z=z,
-                            w0=w0,
-                            continuum_region=continuum_region,
-                            fitting_region=fitting_region,
-                            plot_region=plot_region,
-                            plot_title=plot_title,
-                            line_region=line_region,
-                            mask_negflux = mask_negflux,
-                            fit_model=fit_model,
-                            hb_narrow=hb_narrow,
-                            verbose=verbose,
-                            xscale=xscale,
-                            gh_order=gh_order)
-            return fit_out 
+    #             plot_fit_d3(wav=wav,
+    #                         flux = flux_plot,
+    #                         err=err,
+    #                         pars=pars,
+    #                         mod=mod,
+    #                         out=out,
+    #                         plot_savefig = plot_savefig,
+    #                         save_dir = save_dir,
+    #                         maskout = maskout,
+    #                         z=z,
+    #                         w0=w0,
+    #                         continuum_region=continuum_region,
+    #                         fitting_region=fitting_region,
+    #                         plot_region=plot_region,
+    #                         plot_title=plot_title,
+    #                         line_region=line_region,
+    #                         mask_negflux = mask_negflux,
+    #                         fit_model=fit_model,
+    #                         hb_narrow=hb_narrow,
+    #                         verbose=verbose,
+    #                         xscale=xscale,
+    #                         gh_order=gh_order)
+    #         return fit_out 
 
-        else:
+    #     else:
 
-            if save_dir is not None:
+    #         print plot_title, k, fit_out['fwhm']
 
-                for col in df_out:
+    #         if save_dir is not None:
 
-                    df_out.loc[k, col] = fit_out[col]
-           
-    if save_dir is not None:      
-        df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+    #             for col in df_out:
+
+    #                 df_out.loc[k, col] = fit_out[col]
+
 
     return None 
 
