@@ -1701,7 +1701,7 @@ def fit1(obj,
 
     if verbose:
         if n_samples == 1:
-            print out.message  
+            print colored(out.message, 'red'), colored('Number of function evaluations: {}'.format(out.nfev), 'red') 
             print fit_report(out.params)
 
     ####################################################################################################################
@@ -2079,7 +2079,7 @@ def fit3(obj,
 
     if fit_model == 'MultiGauss':
 
-        xscale = 1.0 
+        xscale = 1.0
 
         # Make model 
         bkgd = ConstantModel()
@@ -2167,6 +2167,7 @@ def fit3(obj,
                        'oiii_b_fwhm':np.nan,
                        'oiii_5007_b_voff':np.nan,
                        'oiii_5007_blueshift':np.nan,
+                       'oiii_5007_quartile':np.nan,
                        'redchi':np.nan,
                        'snr':np.nan,
                        'dv':np.nan, 
@@ -2850,6 +2851,7 @@ def fit3(obj,
         oiii_5007_b_fwhm = np.nan 
         oiii_5007_b_voff = np.nan 
         oiii_5007_blueshift = np.nan 
+        oiii_5007_quartile = np.nan 
     
         #######################################################################
         """
@@ -3011,8 +3013,8 @@ def fit3(obj,
         oiii_5007_cdf = np.cumsum(oiii_5007_pdf / oiii_5007_norm)       
         oiii_5007_blueshift = out.params['oiii_5007_n_center'].value - oiii_5007_n_xs[np.argmin( np.abs(oiii_5007_cdf - 0.5))]
 
-        
-
+        # 0.25 quartile OIII composite 
+        oiii_5007_quartile = out.params['oiii_5007_n_center'].value - oiii_5007_n_xs[np.argmin( np.abs(oiii_5007_cdf - 0.25))]
 
         #-------------------------------------------------------------------------------------------
     
@@ -3078,6 +3080,7 @@ def fit3(obj,
         oiii_5007_b_fwhm = np.nan 
         oiii_5007_b_voff = np.nan
         oiii_5007_blueshift = np.nan 
+        oiii_5007_quartile = np.nan
 
         broad_fwhms = np.repeat(np.nan, 3)
         broad_cens = np.repeat(np.nan, 3)
@@ -3122,6 +3125,7 @@ def fit3(obj,
         oiii_5007_b_fwhm = np.nan 
         oiii_5007_b_voff = np.nan
         oiii_5007_blueshift = np.nan 
+        oiii_5007_quartile = np.nan 
 
     if fit_model == 'siiv':
 
@@ -3139,6 +3143,7 @@ def fit3(obj,
         oiii_5007_b_fwhm = np.nan 
         oiii_5007_b_voff = np.nan
         oiii_5007_blueshift = np.nan 
+        oiii_5007_quartile = np.nan 
 
 
 
@@ -3172,6 +3177,7 @@ def fit3(obj,
                'oiii_b_fwhm':oiii_5007_b_fwhm,
                'oiii_5007_b_voff':oiii_5007_b_voff,
                'oiii_5007_blueshift':oiii_5007_blueshift, 
+               'oiii_5007_quartile': oiii_5007_quartile,  
                'redchi':out.redchi,
                'snr':snr_k,
                'dv':spec_dv, 
@@ -3209,6 +3215,7 @@ def fit3(obj,
                   'OIII5007 broad FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_b_fwhm']),\
                   'OIII5007 broad velocity: {0:.2f} km/s \n'.format(fit_out['oiii_5007_b_voff']),\
                   'OIII5007 blueshift: {0:.2f} km/s \n'.format(fit_out['oiii_5007_blueshift']),\
+                  'OIII5007 quartile: {0:.2f} km/s \n'.format(fit_out['oiii_5007_quartile']),\
                   'Reduced chi-squared: {0:.2f} \n'.format(fit_out['redchi']),\
                   'S/N: {0:.2f} \n'.format(fit_out['snr']), \
                   'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
@@ -3238,6 +3245,7 @@ def fit3(obj,
                 format(fit_out['oiii_b_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_b_fwhm']) else ',',\
                 format(fit_out['oiii_5007_b_voff'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_voff']) else ',',\
                 format(fit_out['oiii_5007_blueshift'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_blueshift']) else ',',\
+                format(fit_out['oiii_5007_quartile'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_quartile']) else ',',\
                 format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
 
 
@@ -3459,7 +3467,7 @@ def fit_line(wav,
                 columns = ['fwhm', 'fwhm_1', 'fwhm_2', 'fwhm_3', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'redchi', 'snr', 'monolum', 'fe_ew'] 
                 
             if emission_line == 'Hb':
-                columns = ['fwhm', 'fwhm_1', 'fwhm_2', 'fwhm_3', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'oiii_5007_eqw', 'oiii_5007_lum', 'oiii_5007_n_lum', 'oiii_5007_b_lum', 'oiii_fwhm', 'oiii_n_fwhm', 'oiii_b_fwhm', 'oiii_5007_b_voff', 'oiii_5007_blueshift', 'redchi', 'snr', 'monolum', 'fe_ew']
+                columns = ['fwhm', 'fwhm_1', 'fwhm_2', 'fwhm_3', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'oiii_5007_eqw', 'oiii_5007_lum', 'oiii_5007_n_lum', 'oiii_5007_b_lum', 'oiii_fwhm', 'oiii_n_fwhm', 'oiii_b_fwhm', 'oiii_5007_b_voff', 'oiii_5007_blueshift', 'oiii_5007_quartile', 'redchi', 'snr', 'monolum', 'fe_ew']
                 
             if emission_line == 'CIV':
                 columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'redchi', 'snr', 'monolum']
@@ -3539,6 +3547,7 @@ def fit_line(wav,
                        'oiii_b_fwhm':np.nan,
                        'oiii_5007_b_voff':np.nan,
                        'oiii_5007_blueshift':np.nan,
+                       'oiii_5007_quartile':np.nan,
                        'redchi':np.nan,
                        'snr':np.nan,
                        'dv':np.nan, 
@@ -3843,6 +3852,7 @@ def fit_line(wav,
                        'oiii_b_fwhm':np.nan,
                        'oiii_5007_b_voff':np.nan,
                        'oiii_5007_blueshift':np.nan,
+                       'oiii_5007_quartile':np.nan,
                        'redchi':np.nan,
                        'snr':np.nan,
                        'dv':np.nan, 
@@ -3902,6 +3912,8 @@ def fit_line(wav,
         if n_samples == 1:
         # print 'S/N per resolution element in continuum: {0:.2f}'.format(np.median( np.sqrt(33.02 / np.diff(wa) ) * fl[:-1] / er[:-1] )) 
             print 'S/N per pixel in continuum: {0:.2f}'.format(snr[0]) 
+
+   
         
     ##############################################################################################  
 
