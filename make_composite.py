@@ -69,21 +69,21 @@ def MakeComposite():
 w, f = MakeComposite()
 fig, ax = plt.subplots()
 ax.plot(w, f)
-err = np.repeat(0.05,len(f))
+# err = np.repeat(0.05,len(f))
 
-fit_line(w,
-         f,
-         err,
-         z=0.0,
-         w0=6564.89*u.AA,
-         continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
-         fitting_region=[6400,6800]*u.AA,
-         plot_region=[6000,7000]*u.AA,
-         nGaussians=0,
-         nLorentzians=2,
-         maskout=None,
-         verbose=True,
-         plot=True)
+# fit_line(w,
+#          f,
+#          err,
+#          z=0.0,
+#          w0=6564.89*u.AA,
+#          continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
+#          fitting_region=[6400,6800]*u.AA,
+#          plot_region=[6000,7000]*u.AA,
+#          nGaussians=0,
+#          nLorentzians=2,
+#          maskout=None,
+#          verbose=True,
+#          plot=True)
 
 #Peak: -74.326125
 #FWHM: 2338.39064098

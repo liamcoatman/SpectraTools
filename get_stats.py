@@ -24,8 +24,12 @@ def stats(wave, flux, err, wave_min, wave_max, show=False):
     i = np.argmin( np.abs( wave - wave_min))
     j = np.argmin( np.abs( wave - wave_max))
 
+    flux = flux * 1e18
+    err = err * 1e18
+
     fl = flux[i:j]
     er = err[i:j]
+    w = wave[i:j]
 
     good = (er > 0) & ~np.isnan(fl)
     if len(good.nonzero()[0]) == 0:
@@ -34,10 +38,12 @@ def stats(wave, flux, err, wave_min, wave_max, show=False):
 
     fl = fl[good]
     er = er[good]
+    w = w[good]
 
-#    fig, ax = plt.subplots()
-#    ax.errorbar(wave[good], fl, yerr=er)
-#    plt.show()
+    fig, ax = plt.subplots()
+    ax.errorbar(w, fl, yerr=er)
+    ax2 = ax.twinx()
+    ax2.plot(w, er, color='red')
 
     mfl = fl.mean()
     std = fl.std()
@@ -45,6 +51,8 @@ def stats(wave, flux, err, wave_min, wave_max, show=False):
 
     snr = fl / er
     snr = np.median(snr)
+
+    ax.set_title('snr = {0:.2f}'.format(snr))
 
     if show:
         print 'mean %g, std %g, er %g, snr %g' % (mfl, std, mer, snr)
@@ -55,48 +63,21 @@ def stats(wave, flux, err, wave_min, wave_max, show=False):
 if __name__ == '__main__':
 
     import sys
+    import os
     sys.path.append("/home/lc585/Dropbox/IoA/BlackHoleMasses")
     from wht_properties import get_wht_quasars
-    quasars = get_wht_quasars()
-    zs =  np.array([q.z_HW10 for q in quasars.all_quasars()])
-    sdss_name = np.array([i.sdss_name for i in quasars.all_quasars()])
-    boss_name = np.array([i.boss_name for i in quasars.all_quasars()])
+    quasars = get_wht_quasars().all_quasars()
+    q = quasars[10]
 
-    for i in sdss_name:
-        print i
-    i = np.where(sdss_name=='SDSSJ132948.73+324124.4')[0][0]
-    zs = np.delete(zs,i)
-    sdss_name = np.delete(sdss_name,i)
-    boss_name = np.delete(boss_name,i)
+    print q.sdss_name
 
-    names = ['SDSSJ0738+2710',
-            'SDSSJ0743+2457',
-            'SDSSJ0806+2455',
-            'SDSSJ0829+2423',
-            'SDSSJ0854+0317',
-            'SDSSJ0858+0152',
-            'SDSSJ1104+0957',
-            'SDSSJ1236+1129',
-            'SDSSJ1246+0426',
-            'SDSSJ1306+1510',
-            'SDSSJ1317+0806',
-            'SDSSJ1329+3241',
-            'SDSSJ1336+1443',
-            'SDSSJ1339+1515',
-            'SDSSJ1400+1205',
-            'BQJ1525+2928',
-            'SDSSJ1530+0623',
-            'BQJ1538+0233',
-            'SDSSJ1618+2341',
-            'BQJ1627+3135',
-            'SDSSJ1634+3014']
+    fname = os.path.join('/data/lc585/WHT_20150331/html/',q.name,'tcdimcomb.ms.fits')
 
+    wav, dw, flux, err = get_liris_spec(fname)
 
-    import os
-    wav, dw, flux, err = get_boss_dr12_spec('SDSSJ132948.73+324124.4')
-    mfl, std, mer, snr = stats(wav/(1.0+z), flux, err, 1500.0, 1600.0, show=True)
+    mfl, std, mer, snr = stats(wav/(1.0+q.z_ICA), flux, err, 6400, 6800, show=True)
 
-
+#    plt.show()
 
 #    for name, z in zip(names, zs):
 #

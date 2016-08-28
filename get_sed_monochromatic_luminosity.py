@@ -34,14 +34,20 @@ from functools import partial
 import astropy.units as u
 import math
 from astropy.cosmology import WMAP9 as cosmoWMAP
+from functools import partial
+from multiprocessing import Pool
 
 # Temporary - eventually add qsofit to python path
 sys.path.insert(0, '/home/lc585/Dropbox/IoA/QSOSED/Model/qsofit')
 from qsrmod import qsrmod
 from load import load as qsrload
 
-def mono_lum(mono_wav, z, mag, ftrwav, ftrtrans):
-
+def mono_lum(mag=18.0,
+             magsys='AB',
+             mono_wav=5100.0,
+             z=1.0,
+             ftrwav=np.ones(100),
+             ftrtrans=np.ones(100)):
 
     plslp1 = 0.46
     plslp2 = 0.03
@@ -107,11 +113,22 @@ def mono_lum(mono_wav, z, mag, ftrwav, ftrtrans):
                           cosmo,
                           flxcorr)
 
-    # Calculate AB zero point
-    sum1 = np.sum( ftrtrans[:-1] * (0.10893/(ftrwav[:-1]**2)) * ftrwav[:-1] * np.diff(ftrwav))
-    sum2 = np.sum( ftrtrans[:-1] * ftrwav[:-1] * np.diff(ftrwav) )
-    zromag = -2.5 * np.log10(sum1 / sum2)
+    if magsys == 'AB':
+        
+        # Calculate AB zero point
+        sum1 = np.sum( ftrtrans[:-1] * (0.10893/(ftrwav[:-1]**2)) * ftrwav[:-1] * np.diff(ftrwav))
+        sum2 = np.sum( ftrtrans[:-1] * ftrwav[:-1] * np.diff(ftrwav) )
+        zromag = -2.5 * np.log10(sum1 / sum2)
 
+    if magsys == 'VEGA':
+
+        # Calculate vega zero point 
+        fvega = '/data/vault/phewett/vista_work/vega_2007.lis' 
+        vspec = np.loadtxt(fvega) 
+        vf = interp1d(vspec[:,0], vspec[:,1])
+        sum1 = np.sum(ftrtrans[:-1] * vf(ftrwav[:-1]) * ftrwav[:-1] * np.diff(ftrwav))
+        sum2 = np.sum( ftrtrans[:-1] * ftrwav[:-1] * np.diff(ftrwav) ) 
+        zromag = -2.5 * np.log10(sum1 / sum2) 
 
     def resid(p,
               mag,
@@ -127,6 +144,7 @@ def mono_lum(mono_wav, z, mag, ftrwav, ftrtrans):
         sum1 = np.sum( ftrtrans[:-1] * spc(ftrwav[:-1]) * ftrwav[:-1] * np.diff(ftrwav))
         sum2 = np.sum( ftrtrans[:-1] * ftrwav[:-1] * np.diff(ftrwav) )
         ftrmag = (-2.5 * np.log10(sum1 / sum2)) - zromag
+
         return [mag - ftrmag]
 
     resid_p = partial(resid,
@@ -142,10 +160,11 @@ def mono_lum(mono_wav, z, mag, ftrwav, ftrtrans):
 
     result = minimize(resid_p, p, method='leastsq')
 
-    idx5100 = np.argmin( np.abs( (wavlen / (1.0 + z)) - mono_wav))
+    indmin = np.argmin( np.abs( (wavlen / (1.0 + z)) - (mono_wav-5.0)))
+    indmax = np.argmin( np.abs( (wavlen / (1.0 + z)) - (mono_wav+5.0)))
 
     # Flux density in erg/cm2/s/A
-    f5100 =   p['norm'].value * flux[idx5100]
+    f5100 =   p['norm'].value * np.median(flux[indmin:indmax])
 
     f5100 = f5100 * (u.erg / u.cm / u.cm / u.s / u.AA)
 
@@ -156,14 +175,35 @@ def mono_lum(mono_wav, z, mag, ftrwav, ftrtrans):
 
     l5100 = l5100 * 5100.0 * (u.AA)
 
+    # print l5100
+
     return l5100
 
+def mono_lum_err(mag=18.0,
+                 emag=0.1,
+                 mono_wav=5100.0,
+                 z=1.0,
+                 ftrwav=np.ones(100),
+                 ftrtrans=np.ones(100),
+                 n_samples=10):
+
+    m = np.random.normal(mag, emag, n_samples)
+    mono_lum_p = partial(mono_lum, mono_wav=mono_wav, z=z, ftrwav=ftrwav, ftrtrans=ftrtrans)
+    pool = Pool(processes=16)
+    lmon = pool.map(mono_lum_p, m)
+    lmon = np.array([i.value for i in lmon])
+
+    # import matplotlib.pyplot as plt
+    # fig, ax = plt.subplots()
+    # ax.hist(lmon, bins=20)
+    # plt.show()
+
+    return np.mean(lmon), np.std(lmon)
 
 if __name__ == '__main__':
 
-    with open('/home/lc585/Dropbox/IoA/QSOSED/Model/Filter_Response/H.response','r') as f:
-            ftrwav, ftrtrans = np.loadtxt(f,unpack=True)
-
-    l5100 = mono_lum(5100.0, 2.445636, 18.2766, ftrwav, ftrtrans)
-    print l5100
-
+    sys.path.insert(0, '/home/lc585/Dropbox/IoA/BlackHoleMasses')
+    from wht_properties import get_wht_quasars
+    qs = get_wht_quasars().all_quasars()
+    for q in qs:
+        print q.sdss_name, q.calc_mono_lum_5100_err()

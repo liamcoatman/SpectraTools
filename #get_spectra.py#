@@ -44,7 +44,7 @@ def get_sdss_dr7_spec(name):
     i = np.where( SDSSNames == name )[0]
 
     if len(i) != 0:
-        hdulist = fits.open( SpecFiles[i][0] )
+        hdulist = fits.open( SpecFiles[i][0] 
         data = hdulist[0].data
         hdr = hdulist[0].header
         hdulist.close()

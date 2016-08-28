@@ -1,17 +1,52 @@
-# only confident this works for gaussians 
+import lmfit
+import cPickle
+import random
+from copy import deepcopy
 
-import numpy as np 
-l = [] 
-with open('/data/lc585/WHT_20150331/OBS/TS1049+1032_LR_Night2/Reduced/splot.log') as f:
-    for line in f.readlines():
-        if len(line.split()) == 7:
-        	l.append(line.split())
 
-l = np.asarray(l, dtype=np.float)
+# invent an arbitrary Parameters set with expressions
+p = lmfit.Parameters()
+for i in range(10):
+    p.add('var_%s' % i, value=i)
+    if i >= 1:
+        j = random.randint(0, i)
+        p['var_%s' % i].expr = 'var_%s' % j
 
-# in mk1dspec peak normalised to continum of one.
-# use gaussian - voigt seems to overestimate bkgd for some reason 
-# wavelength peak gaussian gfwhm    
-with open('/data/lc585/WHT_20150331/OBS/TS1049+1032_LR_Night2/Reduced/splot_mod.log', 'w') as f:
-    for line in l:
-    	f.write(str(line[0]) + ' ' + str(1.0-line[1]+line[4]) + ' gaussian ' + str(line[5]) + '\n')
+# pull out expressions and store in list of tuples
+t = []
+for v in p:
+    t.append((v, p[v].expr))
+
+# remove expressions from Parameters instance
+original = deepcopy(p)
+for v in p:
+    p[v].expr = None
+
+# we'll need to bundle these somehow so that they're both pickled
+class bundle(object):
+    def __init__(self, par, expr):
+        """
+            -par: the parameters instance
+            -expr: the sorted list of constraint expressions
+        """
+        self.par = par
+        self.expr = expr
+
+b = bundle(p, t)
+
+# pickle
+with open('test_pickle.dat', 'wb') as f:
+    cPickle.dump(b, f, -1)
+
+# unpickling
+with open('test_pickle.dat', 'rb') as f:
+    bprime = cPickle.load(f)
+
+# recreate our original Parameters instance
+pprime = bprime.par
+for v in bprime.expr:
+    pprime[v[0]].expr = v[1]
+
+print original
+
+print pprime

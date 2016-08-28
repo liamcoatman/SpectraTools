@@ -32,13 +32,14 @@ def BHMass(line='Ha',
 
     if line.lower() == 'ha':
 
+
         fwhm = fwhm / (1e3*(u.km/u.s))
         fwhm_err = fwhm_err / (1e3*(u.km/u.s))
 
-        p1 = np.power(fwhm,1.03)
-        e1 = np.power(fwhm, 1.03-1.0) * 1.03 * fwhm_err
+        p1 = np.power(fwhm, 0.93)
+        e1 = np.power(fwhm, 0.93-1.0) * 0.93 * fwhm_err
 
-        p2 = 1.07e3*(u.km/u.s)
+        p2 = 1.30e3*(u.km/u.s)
         e2 = 0.0*(u.km/u.s)
 
         fwhm_hb = p1 * p2

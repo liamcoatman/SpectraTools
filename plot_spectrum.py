@@ -23,8 +23,10 @@ Remove spectrum specific values
 from SpectraTools.get_wavelength import get_wavelength
 from astropy.io import fits
 import matplotlib.pyplot as plt
-import seaborn as sns
+# import seaborn as sns
 from rebin import rebin
+import os 
+from SpectraTools.range_from_zscale import range_from_zscale
 
 def plot_spectrum(wav, 
                   flux,
@@ -192,7 +194,11 @@ def plot_spectrum_2d(name):
 
         ax.text(0.4,0.5,'No Spectrum')
 
-    fig.savefig( fname.replace('imcombHR.fit', '2D_HR.png') )
-    plt.close()
+    # fig.savefig( fname.replace('imcombHR.fit', '2D_HR.png') )
+    # plt.close()
 
     return None
+
+if __name__ == '__main__':
+    plot_spectrum_2d('/data/lc585/NTT_Hennawi_Survey/Redux/Sept2011/H/Science/0059-4110_0/sci-SOFI.2011-09-23T06:23:27.151-SOFI.2011-09-23T06:44:47.765.fits')
+    plt.savefig('/data/lc585/NTT_Coatman/Redux/example1.png')

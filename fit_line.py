@@ -308,25 +308,7 @@ def onclick2(event, w0=4862.721*u.AA):
         
     return None 
 
-class line_props(object):
-    
-    def __init__(self, 
-                 name, 
-                 peak,
-                 fwhm ,
-                 median,
-                 sigma,
-                 redchi,
-                 eqw):
-
-        self.name = name
-        self.peak = peak 
-        self.fwhm = fwhm
-        self.median = median 
-        self.sigma = sigma 
-        self.redchi = redchi
-        self.eqw = eqw 
-      
+     
 def resid(params=None, 
           x=None, 
           model=None, 
@@ -1076,12 +1058,6 @@ def plot_fit(wav=None,
         residuals.scatter(wave2doppler(wav[fitting][bad_pix], w0).value, (flux[fitting][bad_pix] - resid(pars, wave2doppler(wav[fitting][bad_pix], w0).value, mod)) / err[fitting][bad_pix], color='mediumseagreen', s=40, marker='x')
         eb.scatter(wave2doppler(wav[fitting][bad_pix], w0).value, flux[fitting][bad_pix], color='mediumseagreen', s=40, marker='x')
         fs.scatter(wav[fitting][bad_pix].value, flux[fitting][bad_pix], color='mediumseagreen', s=40, marker='x')
-
-
-
-
-
-
 
     fig.tight_layout()
 
@@ -2110,6 +2086,1390 @@ def fit2(obj,
     return (flux_array_fit_k, flux_array_plot_k, mono_lum, eqw_fe, out.params)
 
 
+
+def make_model_hb(xscale=1.0, 
+                  w0=4862.721*u.AA,
+                  nGaussians=2, 
+                  hb_narrow=True,
+                  fix_broad_peaks=True,
+                  oiii_broad_off=False,
+                  oiii_template=False):
+
+    """
+    From Shen+15/11
+
+    Need to get Boroson and Green (1992) optical iron template, 
+    which people seem to convolve with a Gaussian
+    
+    Model each [OIII] line with Gaussian, one for the core and the other for the blue wing.
+    Decide whether to fix flux ratio 3:1
+    Velocity offset and FWHM of narrow Hb tied to the core [OIII] components
+    Upper limit of 1200 km/s on the narrow line FWHM
+    Broad Hb modelled by single gaussian, or up to 3 Gaussians each with FWHM > 1200 km/s
+
+    It seams like a = b not the same as b = a, which is annoying. 
+    Need to be careful
+
+    """
+
+    mod = GaussianModel(prefix='oiii_5007_n_')
+    mod += GaussianModel(prefix='oiii_5007_b_')
+    mod += GaussianModel(prefix='oiii_4959_n_')
+    mod += GaussianModel(prefix='oiii_4959_b_')
+
+    if hb_narrow is True: 
+        mod += GaussianModel(prefix='hb_n_')  
+
+    for i in range(nGaussians):
+        mod += GaussianModel(prefix='hb_b_{}_'.format(i))  
+
+    pars = mod.make_params() 
+
+   
+    pars['oiii_4959_n_amplitude'].value = 1000.0
+    pars['oiii_5007_n_amplitude'].value = 1000.0
+    pars['oiii_4959_b_amplitude'].value = 1000.0 
+    pars['oiii_5007_b_amplitude'].value = 1000.0 
+    if hb_narrow is True: 
+        pars['hb_n_amplitude'].value = 1000.0  
+    for i in range(nGaussians):
+        pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
+
+    pars['oiii_4959_n_amplitude'].min = 0.0
+    pars['oiii_5007_n_amplitude'].min = 0.0
+    pars['oiii_4959_b_amplitude'].min = 0.0 
+    pars['oiii_5007_b_amplitude'].min = 0.0 
+    if hb_narrow is True:      
+        pars['hb_n_amplitude'].min = 0.0 
+    for i in range(nGaussians): 
+        pars['hb_b_{}_amplitude'.format(i)].min = 0.0  
+
+    # Make sure we don't have all broad and no narrow component 
+    # pars.add('oiii_5007_b_height_delta')
+    # pars['oiii_5007_b_height_delta'].value = 0.5 
+    # pars['oiii_5007_b_height_delta'].max = 2.0
+    # pars['oiii_5007_b_height_delta'].min = 0.0
+    # pars['oiii_5007_b_amplitude'].set(expr='oiii_5007_n_amplitude * oiii_5007_b_height_delta')
+    
+
+    # pars['oiii_5007_b_amplitude'].set(expr='((oiii_5007_n_amplitude/oiii_5007_n_sigma)*oiii_5007_b_height_delta)*oiii_5007_b_sigma')
+
+    # Set 3:1 [OIII] peak ratio  
+    pars['oiii_4959_n_amplitude'].set(expr='0.3333*oiii_5007_n_amplitude')
+
+    # Also set 3:1 [OIII] peak ratio for broad components 
+    pars['oiii_4959_b_amplitude'].set(expr='0.3333*oiii_5007_b_amplitude')
+
+
+    # ---------------------------------------------------------------
+
+    pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+    pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+    pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+    pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+    if hb_narrow is True: 
+        pars['hb_n_center'].value = 0.0    
+    
+    for i in range(nGaussians): 
+        pars['hb_b_{}_center'.format(i)].value = 0.0  
+        pars['hb_b_{}_center'.format(i)].min = -2000.0  
+        pars['hb_b_{}_center'.format(i)].max = 2000.0  
+
+    if fix_broad_peaks:
+
+        if nGaussians == 2:
+            pars['hb_b_1_center'].set(expr = 'hb_b_0_center')
+
+    pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 3000.0
+    pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 3000.0
+    
+    if hb_narrow is True: 
+        pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
+    
+    pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
+
+    pars.add('oiii_5007_b_center_delta') 
+    pars['oiii_5007_b_center_delta'].value = 500.0 
+    pars['oiii_5007_b_center_delta'].min = 0.0
+    pars['oiii_5007_b_center_delta'].max = 1500.0
+    pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
+    pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_5007_b_center_delta')
+
+    # Set broad components of OIII to have fixed relative velocity
+    # pars['oiii_4959_b_center'].set(expr = 'oiii_5007_b_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
+
+
+    #----------------------------------------------------------------------
+
+    pars['oiii_4959_n_sigma'].value = 500.0 / 2.35
+    pars['oiii_5007_n_sigma'].value = 500.0 / 2.35
+    pars['oiii_4959_b_sigma'].value = 1000.0 / 2.35
+    pars['oiii_5007_b_sigma'].value = 1000.0 / 2.35
+    if hb_narrow is True: 
+        pars['hb_n_sigma'].value = 500.0 / 2.35
+    for i in range(nGaussians): 
+        pars['hb_b_{}_sigma'.format(i)].value = 1200.0 
+
+    for i in range(nGaussians): 
+        pars['hb_b_{}_sigma'.format(i)].min = 1000.0 / 2.35
+        # pars['hb_b_{}_sigma'.format(i)].max = 20000.0 / 2.35
+    
+    pars['oiii_5007_b_sigma'].max = 1200.0 / 2.35 
+    pars['oiii_5007_b_sigma'].min = 100.0 / 2.35 
+    pars['oiii_4959_b_sigma'].set(expr='oiii_5007_b_sigma')
+
+    pars['oiii_5007_n_sigma'].min = 100.0 / 2.35 
+    pars['oiii_5007_n_sigma'].max = 1200.0 / 2.35 
+
+    # make sure broad component of oiii is broader than narrow component 
+    # pars.add('oiii_5007_n_sigma_delta')
+    # pars['oiii_5007_n_sigma_delta'].value = 0.5
+    # pars['oiii_5007_n_sigma_delta'].max = 0.9
+    # pars['oiii_5007_n_sigma'].set(expr='oiii_5007_b_sigma*oiii_5007_n_sigma_delta', min=100.0/2.35, max=1200.0/2.35)
+
+
+    pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
+
+    if hb_narrow is True: 
+        pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
+
+
+    if oiii_broad_off:
+
+        pars['oiii_4959_b_amplitude'].set(value=0.0, vary=False)
+        pars['oiii_5007_b_amplitude'].set(value=0.0, vary=False)
+        pars['oiii_4959_b_sigma'].set(value=1200.0/2.35, vary=False)
+        pars['oiii_5007_b_sigma'].set(value=1200.0/2.35, vary=False)
+        pars['oiii_4959_b_center'].set(value=wave2doppler(4960.295*u.AA, w0).value, vary=False)
+        pars['oiii_5007_b_center'].set(value=wave2doppler(5008.239*u.AA, w0).value, vary=False)
+
+    if oiii_template is True:
+
+        """
+        For low S/N use low-z SDSS composite 
+        /data/lc585/nearIR_spectra/linefits/SDSSComposite/my_params.txt
+        """
+
+
+        pars['oiii_5007_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
+        pars['oiii_5007_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
+        pars['oiii_4959_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
+        pars['oiii_4959_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
+        pars['hb_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
+        
+        pars.add('oiii_scale') 
+        pars['oiii_scale'].value = 1.0 
+        pars['oiii_scale'].min = 0.0 
+
+        pars['oiii_5007_n_amplitude'].set(value=233.24, vary=False, expr='oiii_scale*233.24', min=None, max=None)
+        pars['oiii_5007_b_amplitude'].set(value=236.18, vary=False, expr='oiii_scale*236.18', min=None, max=None)
+        pars['oiii_4959_n_amplitude'].set(value=77.74, vary=False, expr='oiii_scale*77.74', min=None, max=None)
+        pars['oiii_4959_b_amplitude'].set(value=78.72, vary=False, expr='oiii_scale*78.72', min=None, max=None)
+        pars['hb_n_amplitude'].set(value=53.24, vary=False, expr='oiii_scale*53.24', min=None, max=None)
+
+ 
+        pars.add('oiii_n_center_delta')
+        pars['oiii_n_center_delta'].min = -500.0
+        pars['oiii_n_center_delta'].max = 500.0
+        pars['oiii_n_center_delta'].value = 0.0  
+        pars['oiii_n_center_delta'].vary = True  
+        
+        pars.add('oiii_5007_center_fixed')
+        pars['oiii_5007_center_fixed'].value = wave2doppler(5008.239*u.AA, w0).value
+        pars['oiii_5007_center_fixed'].vary = False 
+
+        pars.add('oiii_4959_center_fixed')
+        pars['oiii_4959_center_fixed'].value = wave2doppler(4960.295*u.AA, w0).value
+        pars['oiii_4959_center_fixed'].vary = False 
+
+        pars['oiii_5007_n_center'].set(value=wave2doppler(5008.239*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_5007_center_fixed+oiii_n_center_delta')
+        pars['oiii_4959_n_center'].set(value=wave2doppler(4960.295*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_4959_center_fixed+oiii_n_center_delta')
+        pars['hb_n_center'].set(value=0.0, vary=True, min=None, max=None, expr='oiii_n_center_delta')
+
+        pars.add('oiii_5007_b_center_delta') 
+        pars['oiii_5007_b_center_delta'].set(value=200.416080, vary=False, min=None, max=None, expr=None)
+        pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
+        pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_5007_b_center_delta')
+
+    return mod, pars
+
+
+
+def make_model_ha(x,
+                  xscale=1.0, 
+                  w0=6564.89*u.AA,
+                  nGaussians=2,
+                  fix_broad_peaks=True,
+                  ha_narrow_fwhm=1200.0,
+                  ha_narrow_voff=0.0,
+                  ha_narrow_vary=True):
+
+
+    """
+    Implement the Shen+15/11 fitting procedure
+    The narrow components of Hα, [NII]λλ6548,6584, [SII]λλ6717,6731 are each fit with a single Gaussian. 
+    Their velocity offsets from the systemic redshift and line widths are constrained to be the same
+    The relative flux ratio of the two [NII] components is fixed to 2.96 - which way round is this? 
+    We impose an upper limit on the narrow line FWHM < 1200 km/s 
+    The broad Hα component is modelled in two different ways: 
+    a) a single Gaussian with a FWHM > 1200 km/s; 
+    b) multiple Gaussians with up to three Gaussians, each with a FWHM >1200 km/s. 
+    The second method yields similar results to the fits with a truncated Gaussian-Hermite function. 
+    During the fitting, all lines are restricted to be emission lines (i.e., positive flux)
+
+    Also fit Boroson and Green iron template 
+
+    """
+
+    mod = GaussianModel(prefix='ha_n_')  
+
+    mod += GaussianModel(prefix='nii_6548_n_')
+
+    mod += GaussianModel(prefix='nii_6584_n_')
+
+    mod += GaussianModel(prefix='sii_6717_n_')
+
+    mod += GaussianModel(prefix='sii_6731_n_')
+
+
+    for i in range(nGaussians):
+
+        mod += GaussianModel(prefix='ha_b_{}_'.format(i))  
+
+    pars = mod.make_params() 
+
+    pars['nii_6548_n_amplitude'].value = 1000.0
+    pars['nii_6584_n_amplitude'].value = 1000.0
+    pars['sii_6717_n_amplitude'].value = 1000.0 
+    pars['sii_6731_n_amplitude'].value = 1000.0 
+    pars['ha_n_amplitude'].value = 1000.0  
+    for i in range(nGaussians):
+        pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
+
+    for i in range(nGaussians): 
+        pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
+        pars['ha_b_{}_center'.format(i)].min = -2000.0  
+        pars['ha_b_{}_center'.format(i)].max = 2000.0  
+
+    if fix_broad_peaks:
+
+        if nGaussians == 2:
+            pars['ha_b_1_center'].set(expr = 'ha_b_0_center')
+        elif nGaussians == 3:
+            pars['ha_b_2_center'].set(expr = 'ha_b_0_center')
+
+    pars['nii_6548_n_sigma'].value = ha_narrow_fwhm / 2.35 
+    pars['nii_6584_n_sigma'].value = ha_narrow_fwhm / 2.35
+    pars['sii_6717_n_sigma'].value = ha_narrow_fwhm / 2.35
+    pars['sii_6731_n_sigma'].value = ha_narrow_fwhm / 2.35
+    pars['ha_n_sigma'].value = ha_narrow_fwhm / 2.35 
+
+    if ha_narrow_vary is False:
+
+        pars['nii_6548_n_sigma'].vary = False
+        pars['nii_6584_n_sigma'].vary = False
+        pars['sii_6717_n_sigma'].vary = False
+        pars['sii_6731_n_sigma'].vary = False
+        pars['ha_n_sigma'].vary = False
+
+    else:
+
+        pars['ha_n_sigma'].max = 1200.0 / 2.35 
+        pars['ha_n_sigma'].min = 400.0 / 2.35 
+        pars['nii_6548_n_sigma'].set(expr='ha_n_sigma')
+        pars['nii_6584_n_sigma'].set(expr='ha_n_sigma')
+        pars['sii_6717_n_sigma'].set(expr='ha_n_sigma')
+        pars['sii_6731_n_sigma'].set(expr='ha_n_sigma')
+   
+    for i in range(nGaussians): 
+        pars['ha_b_{}_sigma'.format(i)].value = 1200.0
+
+    for i in range(nGaussians): 
+        pars['ha_b_{}_sigma'.format(i)].min = 1200.0 / 2.35
+
+
+
+    pars['nii_6548_n_amplitude'].min = 0.0
+    pars['nii_6584_n_amplitude'].min = 0.0
+    pars['sii_6717_n_amplitude'].min = 0.0 
+    pars['sii_6731_n_amplitude'].min = 0.0 
+    pars['ha_n_amplitude'].min = 0.0 
+    for i in range(nGaussians): 
+        pars['ha_b_{}_amplitude'.format(i)].min = 0.0  
+    
+    pars['ha_n_center'].value = ha_narrow_voff 
+    pars['sii_6731_n_center'].value = ha_narrow_voff + wave2doppler(6731*u.AA, w0).value 
+    pars['sii_6717_n_center'].value = ha_narrow_voff + wave2doppler(6717*u.AA, w0).value 
+    pars['nii_6548_n_center'].value = ha_narrow_voff + wave2doppler(6548*u.AA, w0).value 
+    pars['nii_6584_n_center'].value  = ha_narrow_voff + wave2doppler(6584*u.AA, w0).value 
+
+    if ha_narrow_vary is False:
+
+        pars['ha_n_center'].vary = False 
+        pars['sii_6731_n_center'].vary = False 
+        pars['sii_6717_n_center'].vary = False 
+        pars['nii_6548_n_center'].vary = False 
+        pars['nii_6584_n_center'].vary = False  
+
+    else: 
+
+        pars['ha_n_center'].min = -500.0
+        pars['ha_n_center'].max = 500.0
+    
+        pars['sii_6731_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6731*u.AA, w0).value))
+        pars['sii_6717_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6717*u.AA, w0).value))
+        pars['nii_6548_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6548*u.AA, w0).value))
+        pars['nii_6584_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6584*u.AA, w0).value))
+
+    pars['nii_6548_n_amplitude'].set(expr='0.333*nii_6584_n_amplitude')
+
+    # if si unconstrained to stop it giving something silly. 
+    wmax = doppler2wave(np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale).max()*(u.km/u.s), w0)
+    if wmax < 6717*u.AA:
+        pars['sii_6717_n_amplitude'].value = 0.0
+        pars['sii_6717_n_amplitude'].vary = False 
+        pars['sii_6731_n_amplitude'].value = 0.0
+        pars['sii_6731_n_amplitude'].vary = False 
+
+    return mod, pars 
+
+def make_model_gh(xscale=1.0,
+                  gh_order=4,
+                  fmin=1500.0,
+                  fmax=1600.0):
+
+    param_names = []
+
+    for i in range(gh_order + 1):
+        
+        param_names.append('amp{}'.format(i))
+        param_names.append('sig{}'.format(i))
+        param_names.append('cen{}'.format(i))
+
+    if gh_order == 0: 
+ 
+        mod = Model(gausshermite_0, independent_vars=['x'], param_names=param_names) 
+    
+    if gh_order == 1: 
+ 
+        mod = Model(gausshermite_1, independent_vars=['x'], param_names=param_names) 
+    
+    if gh_order == 2: 
+ 
+        mod = Model(gausshermite_2, independent_vars=['x'], param_names=param_names) 
+    
+    if gh_order == 3: 
+ 
+        mod = Model(gausshermite_3, independent_vars=['x'], param_names=param_names) 
+    
+    if gh_order == 4: 
+ 
+        mod = Model(gausshermite_4, independent_vars=['x'], param_names=param_names) 
+    
+    if gh_order == 5: 
+ 
+        mod = Model(gausshermite_5, independent_vars=['x'], param_names=param_names) 
+
+    if gh_order == 6: 
+ 
+        mod = Model(gausshermite_6, independent_vars=['x'], param_names=param_names) 
+
+    pars = mod.make_params()
+
+    for i in range(gh_order + 1):
+
+        pars['amp{}'.format(i)].value = 1.0
+        pars['sig{}'.format(i)].value = 1.0
+        pars['cen{}'.format(i)].value = 0.0
+ 
+        # remember that wav_fitting_array mask includes the background windows, 
+        # so don't use this 
+        # already converted fitting_region in to units of wavelength. 
+
+        pars['cen{}'.format(i)].min = fmin / xscale
+        pars['cen{}'.format(i)].max = fmax / xscale
+
+        pars['sig{}'.format(i)].min = 0.1
+
+        pars['amp{}'.format(i)].min = 0.0  
+
+
+
+    return mod, pars 
+
+
+def make_model_multigauss(x,
+                          y,
+                          nGaussians=2,
+                          fix_broad_peaks=False):
+
+    # Make model 
+    bkgd = ConstantModel()
+    mod = bkgd
+    pars = bkgd.make_params()
+    
+    # A bit unnessesary, but I need a way to do += in the loop below
+    pars['c'].value = 0.0
+    pars['c'].vary = False
+
+    for i in range(nGaussians):
+        gmod = GaussianModel(prefix='g{}_'.format(i))
+        mod += gmod
+        pars += gmod.guess(y[~ma.getmaskarray(y)], x=ma.getdata(x[~ma.getmaskarray(x)]).value)
+           
+    for i in range(nGaussians):
+        pars['g{}_center'.format(i)].value = 0.0
+        pars['g{}_center'.format(i)].min = -2000.0
+        pars['g{}_center'.format(i)].max = 2000.0 
+        pars['g{}_amplitude'.format(i)].min = 0.0
+        # pars['g{}_sigma'.format(i)].min = 1000.0 # sometimes might be better if this is relaxed 
+        # pars['g{}_sigma'.format(i)].max = 10000.0 
+        # pars['g0_center'].set(expr='g1_center')
+        pars['g{}_amplitude'.format(i)].value =  1.0 
+        pars['g{}_sigma'.format(i)].value = 1200.0 
+
+    if fix_broad_peaks:
+
+            for i in range(1, nGaussians):
+                pars['g{}_center'.format(i)].set(expr = 'g0_center')
+
+    return mod, pars  
+  
+
+
+def make_model_oiii(xscale=1.0, 
+                    w0=4862.721*u.AA,
+                    nGaussians=2, 
+                    hb_narrow=True,
+                    fix_broad_peaks=True,
+                    oiii_broad_off=False,
+                    oiii_template=False):
+
+
+    """
+    From Shen+15/11
+
+    Need to get Boroson and Green (1992) optical iron template, 
+    which people seem to convolve with a Gaussian
+    
+    Model each [OIII] line with Gaussian, one for the core and the other for the blue wing.
+    Decide whether to fix flux ratio 3:1
+    Velocity offset and FWHM of narrow Hb tied to the core [OIII] components
+    Upper limit of 1200 km/s on the narrow line FWHM
+    Broad Hb modelled by single gaussian, or up to 3 Gaussians each with FWHM > 1200 km/s
+
+    It seams like a = b not the same as b = a, which is annoying. 
+    Need to be careful
+
+    """
+
+    xscale = 1.0 
+
+    mod = GaussianModel(prefix='oiii_5007_n_')
+    mod += GaussianModel(prefix='oiii_5007_b_')
+    mod += GaussianModel(prefix='oiii_4959_n_')
+    mod += GaussianModel(prefix='oiii_4959_b_')
+
+    if hb_narrow is True: 
+        mod += GaussianModel(prefix='hb_n_')  
+
+    for i in range(nGaussians):
+        mod += GaussianModel(prefix='hb_b_{}_'.format(i))  
+
+    pars = mod.make_params() 
+
+   
+    pars['oiii_4959_n_amplitude'].value = 1000.0
+    pars['oiii_5007_n_amplitude'].value = 1000.0
+    pars['oiii_4959_b_amplitude'].value = 1000.0 
+    pars['oiii_5007_b_amplitude'].value = 1000.0 
+    if hb_narrow is True: 
+        pars['hb_n_amplitude'].value = 1000.0  
+    for i in range(nGaussians):
+        pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
+
+    pars['oiii_4959_n_amplitude'].min = 0.0
+    pars['oiii_5007_n_amplitude'].min = 0.0
+    pars['oiii_4959_b_amplitude'].min = 0.0 
+    pars['oiii_5007_b_amplitude'].min = 0.0 
+    if hb_narrow is True:      
+        pars['hb_n_amplitude'].min = 0.0 
+    for i in range(nGaussians): 
+        pars['hb_b_{}_amplitude'.format(i)].min = 0.0  
+
+    # Make sure we don't have all broad and no narrow component 
+    # pars.add('oiii_5007_b_height_delta')
+    # pars['oiii_5007_b_height_delta'].value = 0.5 
+    # pars['oiii_5007_b_height_delta'].max = 2.0
+    # pars['oiii_5007_b_height_delta'].min = 0.0
+    # pars['oiii_5007_b_amplitude'].set(expr='oiii_5007_n_amplitude * oiii_5007_b_height_delta')
+    
+
+    # pars['oiii_5007_b_amplitude'].set(expr='((oiii_5007_n_amplitude/oiii_5007_n_sigma)*oiii_5007_b_height_delta)*oiii_5007_b_sigma')
+
+    # Set 3:1 [OIII] peak ratio  
+    pars['oiii_4959_n_amplitude'].set(expr='0.3333*oiii_5007_n_amplitude')
+
+    # Also set 3:1 [OIII] peak ratio for broad components 
+    pars['oiii_4959_b_amplitude'].set(expr='0.3333*oiii_5007_b_amplitude')
+
+
+    # ---------------------------------------------------------------
+
+    pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+    pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+    pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
+    pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
+    if hb_narrow is True: 
+        pars['hb_n_center'].value = 0.0    
+    
+    for i in range(nGaussians): 
+        pars['hb_b_{}_center'.format(i)].value = 0.0  
+        pars['hb_b_{}_center'.format(i)].min = -2000.0  
+        pars['hb_b_{}_center'.format(i)].max = 2000.0  
+
+    if fix_broad_peaks:
+
+        if nGaussians == 2:
+            pars['hb_b_1_center'].set(expr = 'hb_b_0_center')
+
+    pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 3000.0
+    pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 3000.0
+    
+    if hb_narrow is True: 
+        pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
+    
+    pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
+
+    pars.add('oiii_5007_b_center_delta') 
+    pars['oiii_5007_b_center_delta'].value = 500.0 
+    pars['oiii_5007_b_center_delta'].min = 0.0
+    pars['oiii_5007_b_center_delta'].max = 1500.0
+    pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
+    pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_5007_b_center_delta')
+
+    # Set broad components of OIII to have fixed relative velocity
+    # pars['oiii_4959_b_center'].set(expr = 'oiii_5007_b_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
+
+
+    #----------------------------------------------------------------------
+
+    pars['oiii_4959_n_sigma'].value = 500.0 / 2.35
+    pars['oiii_5007_n_sigma'].value = 500.0 / 2.35
+    pars['oiii_4959_b_sigma'].value = 1000.0 / 2.35
+    pars['oiii_5007_b_sigma'].value = 1000.0 / 2.35
+    if hb_narrow is True: 
+        pars['hb_n_sigma'].value = 500.0 / 2.35
+    for i in range(nGaussians): 
+        pars['hb_b_{}_sigma'.format(i)].value = 1200.0 
+
+    for i in range(nGaussians): 
+        pars['hb_b_{}_sigma'.format(i)].min = 1000.0 / 2.35
+        # pars['hb_b_{}_sigma'.format(i)].max = 20000.0 / 2.35
+    
+    pars['oiii_5007_b_sigma'].max = 1200.0 / 2.35 
+    pars['oiii_5007_b_sigma'].min = 100.0 / 2.35 
+    pars['oiii_4959_b_sigma'].set(expr='oiii_5007_b_sigma')
+
+    pars['oiii_5007_n_sigma'].min = 100.0 / 2.35 
+    pars['oiii_5007_n_sigma'].max = 1200.0 / 2.35 
+
+    # make sure broad component of oiii is broader than narrow component 
+    # pars.add('oiii_5007_n_sigma_delta')
+    # pars['oiii_5007_n_sigma_delta'].value = 0.5
+    # pars['oiii_5007_n_sigma_delta'].max = 0.9
+    # pars['oiii_5007_n_sigma'].set(expr='oiii_5007_b_sigma*oiii_5007_n_sigma_delta', min=100.0/2.35, max=1200.0/2.35)
+
+
+    pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
+
+    if hb_narrow is True: 
+        pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
+
+
+    if oiii_broad_off:
+
+        pars['oiii_4959_b_amplitude'].set(value=0.0, vary=False)
+        pars['oiii_5007_b_amplitude'].set(value=0.0, vary=False)
+        pars['oiii_4959_b_sigma'].set(value=1200.0/2.35, vary=False)
+        pars['oiii_5007_b_sigma'].set(value=1200.0/2.35, vary=False)
+        pars['oiii_4959_b_center'].set(value=wave2doppler(4960.295*u.AA, w0).value, vary=False)
+        pars['oiii_5007_b_center'].set(value=wave2doppler(5008.239*u.AA, w0).value, vary=False)
+
+    if oiii_template is True:
+
+        """
+        For low S/N use low-z SDSS composite 
+        /data/lc585/nearIR_spectra/linefits/SDSSComposite/my_params.txt
+        """
+
+
+        pars['oiii_5007_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
+        pars['oiii_5007_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
+        pars['oiii_4959_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
+        pars['oiii_4959_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
+        pars['hb_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
+        
+        pars.add('oiii_scale') 
+        pars['oiii_scale'].value = 1.0 
+        pars['oiii_scale'].min = 0.0 
+
+        pars['oiii_5007_n_amplitude'].set(value=233.24, vary=False, expr='oiii_scale*233.24', min=None, max=None)
+        pars['oiii_5007_b_amplitude'].set(value=236.18, vary=False, expr='oiii_scale*236.18', min=None, max=None)
+        pars['oiii_4959_n_amplitude'].set(value=77.74, vary=False, expr='oiii_scale*77.74', min=None, max=None)
+        pars['oiii_4959_b_amplitude'].set(value=78.72, vary=False, expr='oiii_scale*78.72', min=None, max=None)
+        pars['hb_n_amplitude'].set(value=53.24, vary=False, expr='oiii_scale*53.24', min=None, max=None)
+
+ 
+        pars.add('oiii_n_center_delta')
+        pars['oiii_n_center_delta'].min = -500.0
+        pars['oiii_n_center_delta'].max = 500.0
+        pars['oiii_n_center_delta'].value = 0.0  
+        pars['oiii_n_center_delta'].vary = True  
+        
+        pars.add('oiii_5007_center_fixed')
+        pars['oiii_5007_center_fixed'].value = wave2doppler(5008.239*u.AA, w0).value
+        pars['oiii_5007_center_fixed'].vary = False 
+
+        pars.add('oiii_4959_center_fixed')
+        pars['oiii_4959_center_fixed'].value = wave2doppler(4960.295*u.AA, w0).value
+        pars['oiii_4959_center_fixed'].vary = False 
+
+        pars['oiii_5007_n_center'].set(value=wave2doppler(5008.239*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_5007_center_fixed+oiii_n_center_delta')
+        pars['oiii_4959_n_center'].set(value=wave2doppler(4960.295*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_4959_center_fixed+oiii_n_center_delta')
+        pars['hb_n_center'].set(value=0.0, vary=True, min=None, max=None, expr='oiii_n_center_delta')
+
+        pars.add('oiii_5007_b_center_delta') 
+        pars['oiii_5007_b_center_delta'].set(value=200.416080, vary=False, min=None, max=None, expr=None)
+        pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
+        pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_5007_b_center_delta')
+
+    return mod, pars 
+
+
+def make_model_siiv(w0=1400*u.AA):
+
+    mod = GaussianModel(prefix='g0_') + GaussianModel(prefix='g1_') + GaussianModel(prefix='g2_') + GaussianModel(prefix='g3_') 
+    
+    pars = mod.make_params() 
+
+    pars['g0_amplitude'].value = 1.0
+    pars['g1_amplitude'].value = 1.0
+    pars['g2_amplitude'].value = 1.0
+    pars['g3_amplitude'].value = 1.0
+
+    pars['g0_amplitude'].min = 0.0
+    pars['g1_amplitude'].min = 0.0
+    
+    pars['g2_amplitude'].set(expr='g0_amplitude')
+    pars['g3_amplitude'].set(expr='g1_amplitude')
+
+    pars['g0_sigma'].value = 1.0
+    pars['g1_sigma'].value = 1.0
+    pars['g2_sigma'].value = 1.0
+    pars['g3_sigma'].value = 1.0
+
+    pars['g0_sigma'].min = 1000.0
+    pars['g1_sigma'].min = 1000.0
+
+    pars['g2_sigma'].set(expr='g0_sigma')
+    pars['g3_sigma'].set(expr='g1_sigma')
+
+    pars['g0_center'].value = 0.0
+    pars['g1_center'].value = 0.0
+    pars['g2_center'].value = 0.0
+    pars['g3_center'].value = 0.0
+
+    pars['g1_center'].set(expr='g0_center')        
+    pars['g2_center'].set(expr = 'g0_center+{}'.format(wave2doppler(1402*u.AA, w0).value - wave2doppler(1397*u.AA, w0).value))
+    pars['g3_center'].set(expr='g2_center')
+
+    return mod, pars 
+
+def get_stats_oiii(out,
+                   xscale=1.0, 
+                   w0=4862.721*u.AA,
+                   plot_title=''):
+
+    mod_oiii_5007 = GaussianModel(prefix='oiii_5007_b_') + GaussianModel(prefix='oiii_5007_n_') 
+    mod_oiii_5007_pars = mod_oiii_5007.make_params() 
+
+    mod_oiii_5007_pars['oiii_5007_b_amplitude'].value = out.params['oiii_5007_b_amplitude'].value 
+    mod_oiii_5007_pars['oiii_5007_b_sigma'].value = out.params['oiii_5007_b_sigma'].value
+    mod_oiii_5007_pars['oiii_5007_b_center'].value = out.params['oiii_5007_b_center'].value
+
+    mod_oiii_5007_pars['oiii_5007_n_amplitude'].value = out.params['oiii_5007_n_amplitude'].value 
+    mod_oiii_5007_pars['oiii_5007_n_sigma'].value = out.params['oiii_5007_n_sigma'].value
+    mod_oiii_5007_pars['oiii_5007_n_center'].value = out.params['oiii_5007_n_center'].value
+
+    integrand = lambda x: mod_oiii_5007.eval(params=mod_oiii_5007_pars, x=np.array(x) + wave2doppler(5008.239*u.AA, w0).value) 
+
+    dv = 1.0 # i think if this was anything else might need to change intergration.
+    xs = np.arange(-10000.0, 10000.0, dv) / xscale 
+        
+    norm = np.sum(integrand(xs) * dv)
+    pdf = integrand(xs) / norm
+    cdf = np.cumsum(pdf)
+            
+    fit_out = {'name':plot_title,
+               'oiii_5007_v5':xs[np.argmin(np.abs(cdf - 0.05))],
+               'oiii_5007_v10':xs[np.argmin(np.abs(cdf - 0.1))],
+               'oiii_5007_v25':xs[np.argmin(np.abs(cdf - 0.25))],
+               'oiii_5007_v50':xs[np.argmin(np.abs(cdf - 0.50))],
+               'oiii_5007_v75':xs[np.argmin(np.abs(cdf - 0.75))],
+               'oiii_5007_v90':xs[np.argmin(np.abs(cdf - 0.90))],
+               'oiii_5007_v95':xs[np.argmin(np.abs(cdf - 0.95))],
+               'oiii_5007_eqw':np.nan,
+               'oiii_5007_lum':np.nan}
+
+    return fit_out 
+
+def get_sigma(vl, fl, dv):
+
+    norm = np.sum(fl * dv) 
+    pdf = fl / norm 
+
+    m = np.sum(vl * pdf * dv)
+    v = np.sum((vl-m)**2 * pdf * dv)
+
+    return np.sqrt(v)
+
+def get_median(vl, fl, dv):
+
+    norm = np.sum(fl * dv) 
+    pdf = fl / norm 
+    cdf = np.cumsum(pdf)  
+    return vl[np.argmin(np.abs(cdf - 0.5))]
+
+def get_fwhm(vl, fl):
+
+    """
+    vl: input velocity array
+    fl: input flux array
+    """
+
+    half_max = np.max(fl) / 2.0
+
+    i = 0
+    while fl[i] < half_max:
+        i+=1
+    
+    root1 = vl[i]
+    
+    i = 0
+    while fl[-i] < half_max:
+        i+=1
+    
+    root2 = vl[-i]
+
+    return root2 - root1
+
+
+def get_eqw(vl, 
+            fl, 
+            w0=6564.89*u.AA, 
+            bkgdmod=None, 
+            bkgdpars_k=None, 
+            sp_fe=None,
+            subtract_fe=False):
+
+    xs_wav = doppler2wave(vl*(u.km/u.s), w0)
+    
+    if subtract_fe is True:
+
+        flux_bkgd = resid(params=bkgdpars_k, 
+                          x=xs_wav.value, 
+                          model=bkgdmod,
+                          sp_fe=sp_fe)
+    
+    if subtract_fe is False:
+
+        flux_bkgd = resid(params=bkgdpars_k, 
+                          x=xs_wav.value, 
+                          model=bkgdmod)
+    
+    f = (fl + flux_bkgd) / flux_bkgd
+    eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
+
+    return np.nansum(eqw)
+
+def get_center(vl, fl, dv):
+
+    norm = np.sum(fl * dv) 
+    pdf = fl / norm 
+
+    return vl[np.argmax(pdf)] 
+
+def get_lum(vl, 
+            fl, 
+            z=0.0,
+            w0=6564.89*u.AA,
+            spec_norm=1.0):
+
+    xs_wav = doppler2wave(vl*(u.km/u.s), w0)
+
+    lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)    
+
+    return np.sum(fl[:-1] * np.diff(xs_wav.value)) * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm 
+
+
+def get_broad_stats(vl,
+                    fl,
+                    dv=1.0, 
+                    w0=6564.89*u.AA,
+                    bkgdmod=None,
+                    bkgdpars_k=None, 
+                    sp_fe=None,
+                    subtract_fe=None,
+                    spec_norm=None,
+                    z=0.0):                
+
+
+    """
+    Get stats for broad component
+    """
+
+    fwhm = get_fwhm(vl, fl)
+
+    sd = get_sigma(vl, fl, dv)
+
+    md = get_median(vl, fl, dv)
+
+    eqw = get_eqw(vl,
+                  fl,
+                  w0=w0, 
+                  bkgdmod=bkgdmod, 
+                  bkgdpars_k=bkgdpars_k, 
+                  sp_fe=sp_fe,
+                  subtract_fe=subtract_fe)
+
+    peak_flux = np.max(fl) / spec_norm
+
+    func_center = get_center(vl, fl, dv)
+
+    broad_lum = get_lum(vl, 
+                        fl, 
+                        z=z,
+                        w0=w0,
+                        spec_norm=spec_norm)
+
+    return (fwhm, sd, md, eqw, peak_flux, func_center, broad_lum)
+
+def get_stats_hb(out=None, 
+                 line_region=[-10000.0, 10000.0]*(u.km/u.s), 
+                 xscale=1.0,
+                 w0=np.mean([1548.202,1550.774])*u.AA,
+                 bkgdmod=None,
+                 bkgdpars_k=None,
+                 sp_fe=None,
+                 subtract_fe=False,
+                 spec_norm=None,
+                 z=0.0,
+                 mod=None,
+                 nGaussians=1,
+                 plot_title='',
+                 hb_narrow=True):
+
+
+    """
+    Only use broad Hb components to calculate stats 
+    """
+    
+    mod_broad_hb = ConstantModel()
+    
+    for i in range(nGaussians):
+        mod_broad_hb += GaussianModel(prefix='hb_b_{}_'.format(i))  
+    
+    pars_broad_hb = mod_broad_hb.make_params()
+    
+    pars_broad_hb['c'].value = 0.0
+    
+    for key, value in out.params.valuesdict().iteritems():
+        if key.startswith('hb_b_'):
+            pars_broad_hb[key].value = value 
+
+    integrand = lambda x: mod_broad_hb.eval(params=pars_broad_hb, x=np.array(x))
+
+    dv = 1.0 # i think if this was anything else might need to change intergration.
+    xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
+
+    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum = get_broad_stats(xs*xscale, 
+                                                                           integrand(xs),
+                                                                           dv=dv, 
+                                                                           w0=w0,
+                                                                           bkgdmod=bkgdmod,
+                                                                           bkgdpars_k=bkgdpars_k,
+                                                                           subtract_fe=subtract_fe,
+                                                                           sp_fe=sp_fe,
+                                                                           spec_norm=spec_norm,
+                                                                           z=z)    
+
+    broad_fwhms = np.zeros(nGaussians)
+    broad_cens = np.zeros(nGaussians)
+    broad_amps = np.zeros(nGaussians)
+
+    for i in range(nGaussians):   
+        broad_fwhms[i] = np.array(out.params['hb_b_{}_fwhm'.format(i)].value)
+        broad_cens[i] = np.array(out.params['hb_b_{}_center'.format(i)].value)
+        broad_amps[i] = np.array(out.params['hb_b_{}_amplitude'.format(i)].value)
+
+    inds = np.argsort(broad_fwhms)[::-1]
+
+    broad_fwhms = broad_fwhms[inds]
+    broad_cens = broad_cens[inds]
+    broad_amps = broad_amps[inds]
+
+    if len(broad_fwhms) == 1:
+
+        broad_fwhms = np.append(broad_fwhms, np.nan)
+        broad_cens = np.append(broad_cens, np.nan)
+        broad_amps = np.append(broad_amps, np.nan)
+
+        very_broad_frac = np.nan 
+
+    else: 
+
+        very_broad_mod = GaussianModel()
+        very_broad_pars = very_broad_mod.make_params()
+
+        for key, value in out.params.valuesdict().iteritems():
+            if key.startswith('hb_b_{}'.format(inds[0])):
+                very_broad_pars[key.replace('hb_b_{}_'.format(inds[0]), '')].value = value 
+     
+        quite_broad_mod = GaussianModel()
+        quite_broad_pars = quite_broad_mod.make_params()
+
+        for key, value in out.params.valuesdict().iteritems():
+            if key.startswith('hb_b_{}'.format(inds[1])):
+                quite_broad_pars[key.replace('hb_b_{}_'.format(inds[1]), '')].value = value 
+
+        very_broad_integrand = very_broad_mod.eval(params=very_broad_pars, x=np.array(xs))
+        quite_broad_integrand = quite_broad_mod.eval(params=quite_broad_pars, x=np.array(xs))
+
+        very_broad_frac = np.sum(very_broad_integrand) / (np.sum(quite_broad_integrand) + np.sum(very_broad_integrand))
+
+   
+    oiii_5007_b_mod = GaussianModel()
+    oiii_5007_b_pars = oiii_5007_b_mod.make_params() 
+    
+    oiii_5007_b_pars['amplitude'].value = out.params['oiii_5007_b_amplitude'].value
+    oiii_5007_b_pars['sigma'].value = out.params['oiii_5007_b_sigma'].value 
+    oiii_5007_b_pars['center'].value = out.params['oiii_5007_b_center'].value 
+    
+    oiii_5007_b_xs = np.arange(oiii_5007_b_pars['center'].value - 10000.0, 
+                               oiii_5007_b_pars['center'].value + 10000.0, 
+                               dv)
+    
+    oiii_5007_b_lum = get_lum(oiii_5007_b_xs,
+                              oiii_5007_b_mod.eval(params=oiii_5007_b_pars, x=oiii_5007_b_xs),
+                              z=z,
+                              w0=w0,
+                              spec_norm=spec_norm)   
+
+    
+    oiii_5007_b_fwhm = oiii_5007_b_pars['sigma'].value * 2.35 
+    
+    # Velocity of broad component of OIII relative to narrow component
+    oiii_5007_b_voff = out.params['oiii_5007_b_center_delta'].value  
+
+    oiii_5007_n_mod = GaussianModel()
+    oiii_5007_n_pars = oiii_5007_n_mod.make_params() 
+    
+    oiii_5007_n_pars['amplitude'].value = out.params['oiii_5007_n_amplitude'].value
+    oiii_5007_n_pars['sigma'].value = out.params['oiii_5007_n_sigma'].value 
+    oiii_5007_n_pars['center'].value = out.params['oiii_5007_n_center'].value 
+    
+    oiii_5007_n_xs = np.arange(oiii_5007_n_pars['center'].value - 10000.0, 
+                               oiii_5007_n_pars['center'].value + 10000.0, 
+                               dv)
+    
+    oiii_5007_n_lum = get_lum(oiii_5007_n_xs,
+                              oiii_5007_n_mod.eval(params=oiii_5007_n_pars, x=oiii_5007_n_xs),
+                              z=z,
+                              w0=w0,
+                              spec_norm=spec_norm)
+    
+    oiii_5007_n_fwhm = oiii_5007_n_pars['sigma'].value * 2.35 
+       
+    oiii_5007_mod = GaussianModel(prefix='oiii_5007_n_') + GaussianModel(prefix='oiii_5007_b_')
+    oiii_5007_pars = oiii_5007_mod.make_params() 
+    
+    oiii_5007_pars['oiii_5007_n_amplitude'].value = out.params['oiii_5007_n_amplitude'].value
+    oiii_5007_pars['oiii_5007_n_sigma'].value = out.params['oiii_5007_n_sigma'].value 
+    oiii_5007_pars['oiii_5007_n_center'].value = out.params['oiii_5007_n_center'].value 
+    oiii_5007_pars['oiii_5007_b_amplitude'].value = out.params['oiii_5007_b_amplitude'].value
+    oiii_5007_pars['oiii_5007_b_sigma'].value = out.params['oiii_5007_b_sigma'].value 
+    oiii_5007_pars['oiii_5007_b_center'].value = out.params['oiii_5007_b_center'].value 
+   
+
+    oiii_5007_eqw = get_eqw(oiii_5007_n_xs,
+                            oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs),
+                            w0=w0, 
+                            bkgdmod=bkgdmod, 
+                            bkgdpars_k=bkgdpars_k, 
+                            sp_fe=sp_fe,
+                            subtract_fe=subtract_fe)
+
+
+    
+    oiii_5007_lum = get_lum(oiii_5007_n_xs,
+                            oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs),
+                            z=z,
+                            w0=w0,
+                            spec_norm=spec_norm)  
+    
+
+
+    oiii_5007_fwhm = get_fwhm(oiii_5007_n_xs,
+                              oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs))
+
+    # median for blueshift 
+    oiii_5007_pdf = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
+    oiii_5007_norm = np.sum(oiii_5007_pdf * dv)
+    oiii_5007_cdf = np.cumsum(oiii_5007_pdf / oiii_5007_norm)       
+    oiii_5007_05_percentile = out.params['oiii_5007_n_center'].value - oiii_5007_n_xs[np.argmin( np.abs(oiii_5007_cdf - 0.5))]
+
+    # 0.25 quartile OIII composite 
+    oiii_5007_025_percentile = out.params['oiii_5007_n_center'].value - oiii_5007_n_xs[np.argmin( np.abs(oiii_5007_cdf - 0.25))]
+    oiii_5007_01_percentile = out.params['oiii_5007_n_center'].value - oiii_5007_n_xs[np.argmin( np.abs(oiii_5007_cdf - 0.1))]
+
+
+    #-------------------------------------------------------------------------------------------
+    
+    narrow_fwhm = out.params['oiii_5007_n_sigma'].value * 2.35 
+    narrow_voff = out.params['oiii_5007_n_center'].value  - wave2doppler(5008.239*u.AA, w0).value  
+
+    if hb_narrow is True:
+    
+        narrow_mod = GaussianModel()
+        narrow_pars = narrow_mod.make_params()
+        narrow_pars['amplitude'].value = out.params['hb_n_amplitude'].value
+        narrow_pars['sigma'].value = out.params['hb_n_sigma'].value 
+        narrow_pars['center'].value = out.params['hb_n_center'].value 
+
+        narrow_lum = get_lum(xs*xscale,
+                             narrow_mod.eval(params=narrow_pars, x=xs),
+                             z=z,
+                             w0=w0,
+                             spec_norm=spec_norm)            
+    
+    else:
+    
+        narrow_lum = np.nan * (u.erg / u.s)          
+
+    fit_out = {'name':plot_title, 
+               'fwhm':fwhm,
+               'fwhm_1':broad_fwhms[0],
+               'fwhm_2':broad_fwhms[1],
+               'sigma': sd,
+               'median': md,
+               'cen': func_center,
+               'cen_1':broad_cens[0],
+               'cen_2':broad_cens[1],
+               'eqw': eqw,
+               'broad_lum':np.log10(broad_lum.value),
+               'peak':peak_flux, 
+               'amplitude_1':broad_amps[0],
+               'amplitude_2':broad_amps[1],
+               'very_broad_frac':very_broad_frac,
+               'narrow_fwhm':narrow_fwhm,
+               'narrow_lum':np.log10(narrow_lum.value) if ~np.isnan(narrow_lum.value) else np.nan,
+               'narrow_voff':narrow_voff, 
+               'oiii_5007_eqw':oiii_5007_eqw,
+               'oiii_5007_lum':np.log10(oiii_5007_lum.value) if ~np.isnan(oiii_5007_lum.value) else np.nan,
+               'oiii_5007_n_lum':np.log10(oiii_5007_n_lum.value) if ~np.isnan(oiii_5007_n_lum.value) else np.nan,
+               'oiii_5007_b_lum':np.log10(oiii_5007_b_lum.value) if ~np.isnan(oiii_5007_b_lum.value) else np.nan,
+               'oiii_fwhm':oiii_5007_fwhm,
+               'oiii_n_fwhm':oiii_5007_n_fwhm,
+               'oiii_b_fwhm':oiii_5007_b_fwhm,
+               'oiii_5007_b_voff':oiii_5007_b_voff,
+               'oiii_5007_05_percentile':oiii_5007_05_percentile, 
+               'oiii_5007_025_percentile':oiii_5007_025_percentile, 
+               'oiii_5007_01_percentile':oiii_5007_01_percentile}
+
+   
+    return fit_out 
+
+def get_stats_ha(out=None, 
+                 line_region=[-10000.0, 10000.0]*(u.km/u.s), 
+                 xscale=1.0,
+                 w0=np.mean([1548.202,1550.774])*u.AA,
+                 bkgdmod=None,
+                 bkgdpars_k=None,
+                 sp_fe=None,
+                 subtract_fe=False,
+                 spec_norm=None,
+                 z=0.0,
+                 mod=None,
+                 nGaussians=1,
+                 plot_title=''):
+
+    """
+    Only use broad Hb components to calculate stats 
+    """
+    
+    mod_broad_ha = ConstantModel()
+    
+    for i in range(nGaussians):
+        mod_broad_ha += GaussianModel(prefix='ha_b_{}_'.format(i))  
+    
+    pars_broad_ha = mod_broad_ha.make_params()
+    
+    pars_broad_ha['c'].value = 0.0
+    
+    for key, value in out.params.valuesdict().iteritems():
+        if key.startswith('ha_b_'):
+            pars_broad_ha[key].value = value 
+            
+    
+    integrand = lambda x: mod_broad_ha.eval(params=pars_broad_ha, x=np.array(x))    
+
+    dv = 1.0 # i think if this was anything else might need to change intergration.
+    xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
+
+    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum = get_broad_stats(xs*xscale, 
+                                                                           integrand(xs),
+                                                                           dv=dv, 
+                                                                           w0=w0,
+                                                                           bkgdmod=bkgdmod,
+                                                                           bkgdpars_k=bkgdpars_k,
+                                                                           subtract_fe=subtract_fe,
+                                                                           spec_norm=spec_norm,
+                                                                           z=z)    
+
+
+
+    # I know that the Gaussians are normalised, so the area is just the amplitude, so surely
+    # I shouldn't have to do this function evaluation. 
+
+    broad_fwhms = np.zeros(nGaussians)
+    broad_cens = np.zeros(nGaussians)
+    broad_amps = np.zeros(nGaussians)
+
+    for i in range(nGaussians):   
+        broad_fwhms[i] = np.array(out.params['ha_b_{}_fwhm'.format(i)].value)
+        broad_cens[i] = np.array(out.params['ha_b_{}_center'.format(i)].value)
+        broad_amps[i] = np.array(out.params['ha_b_{}_amplitude'.format(i)].value)
+
+    inds = np.argsort(broad_fwhms)[::-1] # sorts in ascending order
+        
+    broad_fwhms = broad_fwhms[inds]
+    broad_cens = broad_cens[inds]
+    broad_amps = broad_amps[inds]
+
+    if len(broad_fwhms) == 1:
+
+        broad_fwhms = np.append(broad_fwhms, np.nan)
+        broad_cens = np.append(broad_cens, np.nan)
+        broad_amps = np.append(broad_amps, np.nan)
+
+        very_broad_frac = np.nan 
+
+    else: 
+
+        very_broad_mod = GaussianModel()
+        very_broad_pars = very_broad_mod.make_params()
+
+        for key, value in out.params.valuesdict().iteritems():
+            if key.startswith('ha_b_{}'.format(inds[0])):
+                very_broad_pars[key.replace('ha_b_{}_'.format(inds[0]), '')].value = value 
+     
+        quite_broad_mod = GaussianModel()
+        quite_broad_pars = quite_broad_mod.make_params()
+
+        for key, value in out.params.valuesdict().iteritems():
+            if key.startswith('ha_b_{}'.format(inds[1])):
+                quite_broad_pars[key.replace('ha_b_{}_'.format(inds[1]), '')].value = value 
+
+        very_broad_integrand = very_broad_mod.eval(params=very_broad_pars, x=np.array(xs))
+        quite_broad_integrand = quite_broad_mod.eval(params=quite_broad_pars, x=np.array(xs))
+
+        very_broad_frac = np.sum(very_broad_integrand) / (np.sum(quite_broad_integrand) + np.sum(very_broad_integrand))
+
+
+    narrow_mod = GaussianModel()
+    narrow_pars = narrow_mod.make_params()
+    narrow_pars['amplitude'].value = out.params['ha_n_amplitude'].value
+    narrow_pars['sigma'].value = out.params['ha_n_sigma'].value 
+    narrow_pars['center'].value = out.params['ha_n_center'].value 
+
+    narrow_lum = get_lum(xs*xscale, 
+                         narrow_mod.eval(params=narrow_pars, x=xs), 
+                         z=z,
+                         w0=w0,
+                         spec_norm=spec_norm)
+
+    narrow_fwhm = out.params['ha_n_fwhm'].value 
+    narrow_voff = out.params['ha_n_center'].value 
+     
+
+    fit_out = {'name':plot_title, 
+               'fwhm':fwhm,
+               'fwhm_1':broad_fwhms[0],
+               'fwhm_2':broad_fwhms[1],
+               'sigma': sd,
+               'median': md,
+               'cen': func_center,
+               'cen_1':broad_cens[0],
+               'cen_2':broad_cens[1],
+               'eqw': eqw,
+               'broad_lum':np.log10(broad_lum.value),
+               'peak':peak_flux, 
+               'amplitude_1':broad_amps[0],
+               'amplitude_2':broad_amps[1],
+               'very_broad_frac':very_broad_frac,
+               'narrow_fwhm':narrow_fwhm,
+               'narrow_lum':np.log10(narrow_lum.value) if ~np.isnan(narrow_lum.value) else np.nan,
+               'narrow_voff':narrow_voff}
+
+    return fit_out
+
+ 
+
+def get_stats_gh(out=None, 
+                 line_region=[-10000.0, 10000.0]*(u.km/u.s), 
+                 xscale=1.0,
+                 w0=np.mean([1548.202,1550.774])*u.AA,
+                 bkgdmod=None,
+                 bkgdpars_k=None,
+                 sp_fe=None,
+                 subtract_fe=False,
+                 spec_norm=None,
+                 z=0.0,
+                 mod=None,
+                 n_samples=1,
+                 verbose=True,
+                 plot_title=''):
+
+    """
+    Calculate emission line properties
+    Works for gauss hermite and siiv models
+    """
+
+    integrand = lambda x: mod.eval(params=out.params, x=np.array(x))
+
+    dv = 1.0 # i think if this was anything else might need to change intergration.
+    xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
+    
+    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum = get_broad_stats(xs*xscale, 
+                                                                           integrand(xs),
+                                                                           dv=dv, 
+                                                                           w0=w0,
+                                                                           bkgdmod=bkgdmod,
+                                                                           bkgdpars_k=bkgdpars_k,
+                                                                           subtract_fe=subtract_fe,
+                                                                           spec_norm=spec_norm,
+                                                                           z=z)
+
+    fit_out = {'name':plot_title, 
+               'fwhm':fwhm,
+               'sigma':sd,
+               'median':md,
+               'cen': func_center,
+               'eqw':eqw,
+               'broad_lum':np.log10(broad_lum.value),
+               'peak':peak_flux}    
+
+    return fit_out 
+
+def get_stats_multigauss(out=None, 
+                         line_region=[-10000.0, 10000.0]*(u.km/u.s), 
+                         xscale=1.0,
+                         w0=np.mean([1548.202,1550.774])*u.AA,
+                         bkgdmod=None,
+                         bkgdpars_k=None,
+                         sp_fe=None,
+                         subtract_fe=False,
+                         spec_norm=None,
+                         z=0.0,
+                         mod=None,
+                         nGaussians=1,
+                         plot_title=''):
+
+    integrand = lambda x: mod.eval(params=out.params, x=np.array(x))
+
+    dv = 1.0 # i think if this was anything else might need to change intergration.
+    xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
+    
+    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum = get_broad_stats(xs*xscale, 
+                                                                           integrand(xs),
+                                                                           dv=dv, 
+                                                                           w0=w0,
+                                                                           bkgdmod=bkgdmod,
+                                                                           bkgdpars_k=bkgdpars_k,
+                                                                           subtract_fe=subtract_fe,
+                                                                           spec_norm=spec_norm,
+                                                                           z=z)
+
+    broad_fwhms = np.zeros(nGaussians)
+    broad_cens = np.zeros(nGaussians)
+    broad_amps = np.zeros(nGaussians)
+
+    for i in range(nGaussians):   
+        broad_fwhms[i] = np.array(out.params['g{}_fwhm'.format(i)].value)
+        broad_cens[i] = np.array(out.params['g{}_center'.format(i)].value)
+        broad_amps[i] = np.array(out.params['g{}_amplitude'.format(i)].value)
+
+    inds = np.argsort(broad_fwhms)[::-1]
+
+    broad_fwhms = broad_fwhms[inds]
+    broad_cens = broad_cens[inds]
+    broad_amps = broad_amps[inds]
+
+    if len(broad_fwhms) == 1:
+
+        broad_fwhms = np.append(broad_fwhms, np.nan)
+        broad_cens = np.append(broad_cens, np.nan)
+        broad_amps = np.append(broad_amps, np.nan)
+
+        very_broad_frac = np.nan 
+
+    else: 
+
+        very_broad_mod = GaussianModel()
+        very_broad_pars = very_broad_mod.make_params()
+
+        for key, value in out.params.valuesdict().iteritems():
+            if key.startswith('g{}'.format(inds[0])):
+                very_broad_pars[key.replace('g{}_'.format(inds[0]), '')].value = value 
+     
+        quite_broad_mod = GaussianModel()
+        quite_broad_pars = quite_broad_mod.make_params()
+
+        for key, value in out.params.valuesdict().iteritems():
+            if key.startswith('g{}'.format(inds[1])):
+                quite_broad_pars[key.replace('g{}_'.format(inds[1]), '')].value = value 
+
+        very_broad_integrand = very_broad_mod.eval(params=very_broad_pars, x=np.array(xs))
+        quite_broad_integrand = quite_broad_mod.eval(params=quite_broad_pars, x=np.array(xs))
+
+        very_broad_frac = np.sum(very_broad_integrand) / (np.sum(quite_broad_integrand) + np.sum(very_broad_integrand))
+
+    fit_out = {'name':plot_title, 
+               'fwhm':fwhm,
+               'fwhm_1':broad_fwhms[0],
+               'fwhm_2':broad_fwhms[1],
+               'sigma': sd,
+               'median': md,
+               'cen': func_center,
+               'cen_1':broad_cens[0],
+               'cen_2':broad_cens[1],
+               'eqw': eqw,
+               'broad_lum':np.log10(broad_lum.value),
+               'peak':peak_flux, 
+               'amplitude_1':broad_amps[0],
+               'amplitude_2':broad_amps[1],
+               'very_broad_frac':very_broad_frac,
+               'narrow_fwhm':np.nan,
+               'narrow_lum':np.nan,
+               'narrow_voff':np.nan}
+
+    return fit_out 
+
+
+    
+
+
 def fit3(obj, 
          fit_model, 
          nGaussians, 
@@ -2182,48 +3542,17 @@ def fit3(obj,
         sp_fe = spec.Spectrum(wa=10**fe_wav, fl=fe_flux)
 
 
-    if subtract_fe is False:                
+    if subtract_fe is False:     
+
+        sp_fe = None            
 
         bkgdmod = Model(PLModel, 
                         param_names=['amplitude','exponent'], 
                         independent_vars=['x'])
 
-    if fit_model == 'MultiGauss':
+    xscale = 1.0 
 
-        xscale = 1.0
-
-        # Make model 
-        bkgd = ConstantModel()
-        mod = bkgd
-        pars = bkgd.make_params()
-        
-        # A bit unnessesary, but I need a way to do += in the loop below
-        pars['c'].value = 0.0
-        pars['c'].vary = False
-
-        for i in range(nGaussians):
-            gmod = GaussianModel(prefix='g{}_'.format(i))
-            mod += gmod
-            pars += gmod.guess(y[~ma.getmaskarray(y)], x=ma.getdata(x[~ma.getmaskarray(x)]).value)
-               
-        for i in range(nGaussians):
-            pars['g{}_center'.format(i)].value = 0.0
-            pars['g{}_center'.format(i)].min = -2000.0
-            pars['g{}_center'.format(i)].max = 2000.0 
-            pars['g{}_amplitude'.format(i)].min = 0.0
-            # pars['g{}_sigma'.format(i)].min = 1000.0 # sometimes might be better if this is relaxed 
-            # pars['g{}_sigma'.format(i)].max = 10000.0 
-            # pars['g0_center'].set(expr='g1_center')
-            pars['g{}_amplitude'.format(i)].value =  1.0 
-            pars['g{}_sigma'.format(i)].value = 1200.0 
-
-        if fix_broad_peaks:
-
-                for i in range(1, nGaussians):
-                    pars['g{}_center'.format(i)].set(expr = 'g0_center')
-
-
-    elif fit_model == 'GaussHermite':
+    if fit_model == 'GaussHermite':
 
         # Calculate mean and variance
 
@@ -2286,433 +3615,57 @@ def fit3(obj,
 
             return fit_out 
 
-        param_names = []
-
-        for i in range(gh_order + 1):
-            
-            param_names.append('amp{}'.format(i))
-            param_names.append('sig{}'.format(i))
-            param_names.append('cen{}'.format(i))
-
-        if gh_order == 0: 
- 
-            mod = Model(gausshermite_0, independent_vars=['x'], param_names=param_names) 
-    
-        if gh_order == 1: 
- 
-            mod = Model(gausshermite_1, independent_vars=['x'], param_names=param_names) 
-     
-        if gh_order == 2: 
- 
-            mod = Model(gausshermite_2, independent_vars=['x'], param_names=param_names) 
-     
-        if gh_order == 3: 
- 
-            mod = Model(gausshermite_3, independent_vars=['x'], param_names=param_names) 
-     
-        if gh_order == 4: 
- 
-            mod = Model(gausshermite_4, independent_vars=['x'], param_names=param_names) 
-     
-        if gh_order == 5: 
- 
-            mod = Model(gausshermite_5, independent_vars=['x'], param_names=param_names) 
-
-        if gh_order == 6: 
- 
-            mod = Model(gausshermite_6, independent_vars=['x'], param_names=param_names) 
-
-        pars = mod.make_params()
-
-        for i in range(gh_order + 1):
-
-            pars['amp{}'.format(i)].value = 1.0
-            pars['sig{}'.format(i)].value = 1.0
-            pars['cen{}'.format(i)].value = 0.0
- 
-            # remember that wav_fitting_array mask includes the background windows, 
-            # so don't use this 
-            # already converted fitting_region in to units of wavelength. 
-
-            pars['cen{}'.format(i)].min = wave2doppler(fitting_region[0], w0).value / xscale
-            pars['cen{}'.format(i)].max = wave2doppler(fitting_region[1], w0).value / xscale
-
-            pars['sig{}'.format(i)].min = 0.1
-
-            pars['amp{}'.format(i)].min = 0.0    
-
-        
-    elif fit_model == 'Ha':
-
-        """
-        Implement the Shen+15/11 fitting procedure
-        The narrow components of Hα, [NII]λλ6548,6584, [SII]λλ6717,6731 are each fit with a single Gaussian. 
-        Their velocity offsets from the systemic redshift and line widths are constrained to be the same
-        The relative flux ratio of the two [NII] components is fixed to 2.96 - which way round is this? 
-        We impose an upper limit on the narrow line FWHM < 1200 km/s 
-        The broad Hα component is modelled in two different ways: 
-        a) a single Gaussian with a FWHM > 1200 km/s; 
-        b) multiple Gaussians with up to three Gaussians, each with a FWHM >1200 km/s. 
-        The second method yields similar results to the fits with a truncated Gaussian-Hermite function. 
-        During the fitting, all lines are restricted to be emission lines (i.e., positive flux)
-
-        Also fit Boroson and Green iron template 
-
-        """
-
-        xscale = 1.0 
-
-        mod = GaussianModel(prefix='ha_n_')  
-
-        mod += GaussianModel(prefix='nii_6548_n_')
-
-        mod += GaussianModel(prefix='nii_6584_n_')
-
-        mod += GaussianModel(prefix='sii_6717_n_')
-
-        mod += GaussianModel(prefix='sii_6731_n_')
-
-
-        for i in range(nGaussians):
-
-            mod += GaussianModel(prefix='ha_b_{}_'.format(i))  
-
-        pars = mod.make_params() 
-
-        pars['nii_6548_n_amplitude'].value = 1000.0
-        pars['nii_6584_n_amplitude'].value = 1000.0
-        pars['sii_6717_n_amplitude'].value = 1000.0 
-        pars['sii_6731_n_amplitude'].value = 1000.0 
-        pars['ha_n_amplitude'].value = 1000.0  
-        for i in range(nGaussians):
-            pars['ha_b_{}_amplitude'.format(i)].value = 1000.0          
-
-        for i in range(nGaussians): 
-            pars['ha_b_{}_center'.format(i)].value = (-1)**i * 100.0  
-            pars['ha_b_{}_center'.format(i)].min = -2000.0  
-            pars['ha_b_{}_center'.format(i)].max = 2000.0  
-
-        if fix_broad_peaks:
-
-            if nGaussians == 2:
-                pars['ha_b_1_center'].set(expr = 'ha_b_0_center')
-            elif nGaussians == 3:
-                pars['ha_b_2_center'].set(expr = 'ha_b_0_center')
-
-        pars['nii_6548_n_sigma'].value = ha_narrow_fwhm / 2.35 
-        pars['nii_6584_n_sigma'].value = ha_narrow_fwhm / 2.35
-        pars['sii_6717_n_sigma'].value = ha_narrow_fwhm / 2.35
-        pars['sii_6731_n_sigma'].value = ha_narrow_fwhm / 2.35
-        pars['ha_n_sigma'].value = ha_narrow_fwhm / 2.35 
-
-        if ha_narrow_vary is False:
-
-            pars['nii_6548_n_sigma'].vary = False
-            pars['nii_6584_n_sigma'].vary = False
-            pars['sii_6717_n_sigma'].vary = False
-            pars['sii_6731_n_sigma'].vary = False
-            pars['ha_n_sigma'].vary = False
-
-        else:
-
-            pars['ha_n_sigma'].max = 1200.0 / 2.35 
-            pars['ha_n_sigma'].min = 400.0 / 2.35 
-            pars['nii_6548_n_sigma'].set(expr='ha_n_sigma')
-            pars['nii_6584_n_sigma'].set(expr='ha_n_sigma')
-            pars['sii_6717_n_sigma'].set(expr='ha_n_sigma')
-            pars['sii_6731_n_sigma'].set(expr='ha_n_sigma')
+        mod, pars = make_model_gh(xscale=xscale,
+                                  gh_order=gh_order,
+                                  fmin=wave2doppler(fitting_region[0], w0).value,
+                                  fmax=wave2doppler(fitting_region[1], w0).value) 
    
-        for i in range(nGaussians): 
-            pars['ha_b_{}_sigma'.format(i)].value = 1200.0
 
-        for i in range(nGaussians): 
-            pars['ha_b_{}_sigma'.format(i)].min = 1200.0 / 2.35
+    elif fit_model == 'MultiGauss':
 
-
-
-        pars['nii_6548_n_amplitude'].min = 0.0
-        pars['nii_6584_n_amplitude'].min = 0.0
-        pars['sii_6717_n_amplitude'].min = 0.0 
-        pars['sii_6731_n_amplitude'].min = 0.0 
-        pars['ha_n_amplitude'].min = 0.0 
-        for i in range(nGaussians): 
-            pars['ha_b_{}_amplitude'.format(i)].min = 0.0  
-        
-        pars['ha_n_center'].value = ha_narrow_voff 
-        pars['sii_6731_n_center'].value = ha_narrow_voff + wave2doppler(6731*u.AA, w0).value 
-        pars['sii_6717_n_center'].value = ha_narrow_voff + wave2doppler(6717*u.AA, w0).value 
-        pars['nii_6548_n_center'].value = ha_narrow_voff + wave2doppler(6548*u.AA, w0).value 
-        pars['nii_6584_n_center'].value  = ha_narrow_voff + wave2doppler(6584*u.AA, w0).value 
-
-        if ha_narrow_vary is False:
-
-            pars['ha_n_center'].vary = False 
-            pars['sii_6731_n_center'].vary = False 
-            pars['sii_6717_n_center'].vary = False 
-            pars['nii_6548_n_center'].vary = False 
-            pars['nii_6584_n_center'].vary = False  
-
-        else: 
-
-            pars['ha_n_center'].min = -500.0
-            pars['ha_n_center'].max = 500.0
-    
-            pars['sii_6731_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6731*u.AA, w0).value))
-            pars['sii_6717_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6717*u.AA, w0).value))
-            pars['nii_6548_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6548*u.AA, w0).value))
-            pars['nii_6584_n_center'].set(expr = 'ha_n_center+{}'.format(wave2doppler(6584*u.AA, w0).value))
-
-        pars['nii_6548_n_amplitude'].set(expr='0.333*nii_6584_n_amplitude')
-
-        # if si unconstrained to stop it giving something silly. 
-        wmax = doppler2wave(np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale).max()*(u.km/u.s), w0)
-        if wmax < 6717*u.AA:
-            pars['sii_6717_n_amplitude'].value = 0.0
-            pars['sii_6717_n_amplitude'].vary = False 
-            pars['sii_6731_n_amplitude'].value = 0.0
-            pars['sii_6731_n_amplitude'].vary = False 
-            
+        mod, pars = make_model_multigauss(x,
+                                          y,
+                                          nGaussians=2,
+                                          fix_broad_peaks=fix_broad_peaks)
+                
 
     elif fit_model == 'Hb':
 
-        """
-        From Shen+15/11
+        mod, pars = make_model_hb(xscale=xscale,
+                                  w0=w0,
+                                  nGaussians=nGaussians, 
+                                  hb_narrow=hb_narrow,
+                                  fix_broad_peaks=fix_broad_peaks,
+                                  oiii_broad_off=oiii_broad_off,
+                                  oiii_template=oiii_template)
 
-        Need to get Boroson and Green (1992) optical iron template, 
-        which people seem to convolve with a Gaussian
+    elif fit_model == 'Ha':
+
+        mod, pars = make_model_ha(xscale=xscale,
+                                  w0=w0,
+                                  nGaussians=nGaussians,
+                                  fix_broad_peaks=fix_broad_peaks,
+                                  ha_narrow_fwhm=ha_narrow_fwhm,
+                                  ha_narrow_voff=ha_narrow_voff,
+                                  ha_narrow_vary=ha_narrow_vary,
+                                  x=x)
+
+
+    elif fit_model == 'OIII':
+
+        mod, pars = make_model_oiii(xscale=xscale,
+                                    w0=w0,
+                                    nGaussians=nGaussians, 
+                                    hb_narrow=hb_narrow,
+                                    fix_broad_peaks=fix_broad_peaks,
+                                    oiii_broad_off=oiii_broad_off,
+                                    oiii_template=oiii_template)        
     
-        Model each [OIII] line with Gaussian, one for the core and the other for the blue wing.
-        Decide whether to fix flux ratio 3:1
-        Velocity offset and FWHM of narrow Hb tied to the core [OIII] components
-        Upper limit of 1200 km/s on the narrow line FWHM
-        Broad Hb modelled by single gaussian, or up to 3 Gaussians each with FWHM > 1200 km/s
-
-        It seams like a = b not the same as b = a, which is annoying. 
-        Need to be careful
-
-        """
-
-        xscale = 1.0 
-
-        mod = GaussianModel(prefix='oiii_5007_n_')
-        mod += GaussianModel(prefix='oiii_5007_b_')
-        mod += GaussianModel(prefix='oiii_4959_n_')
-        mod += GaussianModel(prefix='oiii_4959_b_')
-
-        if hb_narrow is True: 
-            mod += GaussianModel(prefix='hb_n_')  
-
-        for i in range(nGaussians):
-            mod += GaussianModel(prefix='hb_b_{}_'.format(i))  
-
-        pars = mod.make_params() 
-
-   
-        pars['oiii_4959_n_amplitude'].value = 1000.0
-        pars['oiii_5007_n_amplitude'].value = 1000.0
-        pars['oiii_4959_b_amplitude'].value = 1000.0 
-        pars['oiii_5007_b_amplitude'].value = 1000.0 
-        if hb_narrow is True: 
-            pars['hb_n_amplitude'].value = 1000.0  
-        for i in range(nGaussians):
-            pars['hb_b_{}_amplitude'.format(i)].value = 1000.0  
-
-        pars['oiii_4959_n_amplitude'].min = 0.0
-        pars['oiii_5007_n_amplitude'].min = 0.0
-        pars['oiii_4959_b_amplitude'].min = 0.0 
-        pars['oiii_5007_b_amplitude'].min = 0.0 
-        if hb_narrow is True:      
-            pars['hb_n_amplitude'].min = 0.0 
-        for i in range(nGaussians): 
-            pars['hb_b_{}_amplitude'.format(i)].min = 0.0  
-
-        # Make sure we don't have all broad and no narrow component 
-        # pars.add('oiii_5007_b_height_delta')
-        # pars['oiii_5007_b_height_delta'].value = 0.5 
-        # pars['oiii_5007_b_height_delta'].max = 2.0
-        # pars['oiii_5007_b_height_delta'].min = 0.0
-        # pars['oiii_5007_b_amplitude'].set(expr='oiii_5007_n_amplitude * oiii_5007_b_height_delta')
-        
-
-        # pars['oiii_5007_b_amplitude'].set(expr='((oiii_5007_n_amplitude/oiii_5007_n_sigma)*oiii_5007_b_height_delta)*oiii_5007_b_sigma')
-
-        # Set 3:1 [OIII] peak ratio  
-        pars['oiii_4959_n_amplitude'].set(expr='0.3333*oiii_5007_n_amplitude')
-
-        # Also set 3:1 [OIII] peak ratio for broad components 
-        pars['oiii_4959_b_amplitude'].set(expr='0.3333*oiii_5007_b_amplitude')
-
-
-        # ---------------------------------------------------------------
-
-        pars['oiii_4959_n_center'].value = wave2doppler(4960.295*u.AA, w0).value 
-        pars['oiii_5007_n_center'].value = wave2doppler(5008.239*u.AA, w0).value 
-        pars['oiii_4959_b_center'].value = wave2doppler(4960.295*u.AA, w0).value 
-        pars['oiii_5007_b_center'].value = wave2doppler(5008.239*u.AA, w0).value 
-        if hb_narrow is True: 
-            pars['hb_n_center'].value = 0.0    
-        
-        for i in range(nGaussians): 
-            pars['hb_b_{}_center'.format(i)].value = 0.0  
-            pars['hb_b_{}_center'.format(i)].min = -2000.0  
-            pars['hb_b_{}_center'.format(i)].max = 2000.0  
-
-        if fix_broad_peaks:
-
-            if nGaussians == 2:
-                pars['hb_b_1_center'].set(expr = 'hb_b_0_center')
-
-        pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 3000.0
-        pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 3000.0
-        
-        if hb_narrow is True: 
-            pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
-        
-        pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
-
-        pars.add('oiii_5007_b_center_delta') 
-        pars['oiii_5007_b_center_delta'].value = 500.0 
-        pars['oiii_5007_b_center_delta'].min = 0.0
-        pars['oiii_5007_b_center_delta'].max = 1500.0
-        pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
-        pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_5007_b_center_delta')
-
-        # Set broad components of OIII to have fixed relative velocity
-        # pars['oiii_4959_b_center'].set(expr = 'oiii_5007_b_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
-
-
-        #----------------------------------------------------------------------
-
-        pars['oiii_4959_n_sigma'].value = 500.0 / 2.35
-        pars['oiii_5007_n_sigma'].value = 500.0 / 2.35
-        pars['oiii_4959_b_sigma'].value = 1000.0 / 2.35
-        pars['oiii_5007_b_sigma'].value = 1000.0 / 2.35
-        if hb_narrow is True: 
-            pars['hb_n_sigma'].value = 500.0 / 2.35
-        for i in range(nGaussians): 
-            pars['hb_b_{}_sigma'.format(i)].value = 1200.0 
-
-        for i in range(nGaussians): 
-            pars['hb_b_{}_sigma'.format(i)].min = 1000.0 / 2.35
-            # pars['hb_b_{}_sigma'.format(i)].max = 20000.0 / 2.35
-    
-        pars['oiii_5007_b_sigma'].max = 1200.0 / 2.35 
-        pars['oiii_5007_b_sigma'].min = 100.0 / 2.35 
-        pars['oiii_4959_b_sigma'].set(expr='oiii_5007_b_sigma')
-
-        pars['oiii_5007_n_sigma'].min = 100.0 / 2.35 
-        pars['oiii_5007_n_sigma'].max = 1200.0 / 2.35 
-
-        # make sure broad component of oiii is broader than narrow component 
-        # pars.add('oiii_5007_n_sigma_delta')
-        # pars['oiii_5007_n_sigma_delta'].value = 0.5
-        # pars['oiii_5007_n_sigma_delta'].max = 0.9
-        # pars['oiii_5007_n_sigma'].set(expr='oiii_5007_b_sigma*oiii_5007_n_sigma_delta', min=100.0/2.35, max=1200.0/2.35)
-
-
-        pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
-
-        if hb_narrow is True: 
-            pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
-
-
-        if oiii_broad_off:
-
-            pars['oiii_4959_b_amplitude'].set(value=0.0, vary=False)
-            pars['oiii_5007_b_amplitude'].set(value=0.0, vary=False)
-            pars['oiii_4959_b_sigma'].set(value=1200.0/2.35, vary=False)
-            pars['oiii_5007_b_sigma'].set(value=1200.0/2.35, vary=False)
-            pars['oiii_4959_b_center'].set(value=wave2doppler(4960.295*u.AA, w0).value, vary=False)
-            pars['oiii_5007_b_center'].set(value=wave2doppler(5008.239*u.AA, w0).value, vary=False)
-
-        if oiii_template is True:
-
-            """
-            For low S/N use low-z SDSS composite 
-            /data/lc585/nearIR_spectra/linefits/SDSSComposite/my_params.txt
-            """
-
-
-            pars['oiii_5007_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
-            pars['oiii_5007_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
-            pars['oiii_4959_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
-            pars['oiii_4959_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
-            pars['hb_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
-            
-            pars.add('oiii_scale') 
-            pars['oiii_scale'].value = 1.0 
-            pars['oiii_scale'].min = 0.0 
-
-            pars['oiii_5007_n_amplitude'].set(value=233.24, vary=False, expr='oiii_scale*233.24', min=None, max=None)
-            pars['oiii_5007_b_amplitude'].set(value=236.18, vary=False, expr='oiii_scale*236.18', min=None, max=None)
-            pars['oiii_4959_n_amplitude'].set(value=77.74, vary=False, expr='oiii_scale*77.74', min=None, max=None)
-            pars['oiii_4959_b_amplitude'].set(value=78.72, vary=False, expr='oiii_scale*78.72', min=None, max=None)
-            pars['hb_n_amplitude'].set(value=53.24, vary=False, expr='oiii_scale*53.24', min=None, max=None)
-
- 
-            pars.add('oiii_n_center_delta')
-            pars['oiii_n_center_delta'].min = -500.0
-            pars['oiii_n_center_delta'].max = 500.0
-            pars['oiii_n_center_delta'].value = 0.0  
-            pars['oiii_n_center_delta'].vary = True  
-            
-            pars.add('oiii_5007_center_fixed')
-            pars['oiii_5007_center_fixed'].value = wave2doppler(5008.239*u.AA, w0).value
-            pars['oiii_5007_center_fixed'].vary = False 
-
-            pars.add('oiii_4959_center_fixed')
-            pars['oiii_4959_center_fixed'].value = wave2doppler(4960.295*u.AA, w0).value
-            pars['oiii_4959_center_fixed'].vary = False 
-
-            pars['oiii_5007_n_center'].set(value=wave2doppler(5008.239*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_5007_center_fixed+oiii_n_center_delta')
-            pars['oiii_4959_n_center'].set(value=wave2doppler(4960.295*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_4959_center_fixed+oiii_n_center_delta')
-            pars['hb_n_center'].set(value=0.0, vary=True, min=None, max=None, expr='oiii_n_center_delta')
-
-            pars.add('oiii_5007_b_center_delta') 
-            pars['oiii_5007_b_center_delta'].set(value=200.416080, vary=False, min=None, max=None, expr=None)
-            pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
-            pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_5007_b_center_delta')
-
-            
 
     elif fit_model == 'siiv':
 
-        xscale = 1.0 
+        mod, pars = make_model_siiv(w0=w0)
 
-        mod = GaussianModel(prefix='g0_') + GaussianModel(prefix='g1_') + GaussianModel(prefix='g2_') + GaussianModel(prefix='g3_') 
-        
-        pars = mod.make_params() 
-
-        pars['g0_amplitude'].value = 1.0
-        pars['g1_amplitude'].value = 1.0
-        pars['g2_amplitude'].value = 1.0
-        pars['g3_amplitude'].value = 1.0
-
-        pars['g0_amplitude'].min = 0.0
-        pars['g1_amplitude'].min = 0.0
-        
-        pars['g2_amplitude'].set(expr='g0_amplitude')
-        pars['g3_amplitude'].set(expr='g1_amplitude')
-
-        pars['g0_sigma'].value = 1.0
-        pars['g1_sigma'].value = 1.0
-        pars['g2_sigma'].value = 1.0
-        pars['g3_sigma'].value = 1.0
-
-        pars['g0_sigma'].min = 1000.0
-        pars['g1_sigma'].min = 1000.0
-
-        pars['g2_sigma'].set(expr='g0_sigma')
-        pars['g3_sigma'].set(expr='g1_sigma')
-
-        pars['g0_center'].value = 0.0
-        pars['g1_center'].value = 0.0
-        pars['g2_center'].value = 0.0
-        pars['g3_center'].value = 0.0
-
-        pars['g1_center'].set(expr='g0_center')        
-        pars['g2_center'].set(expr = 'g0_center+{}'.format(wave2doppler(1402*u.AA, w0).value - wave2doppler(1397*u.AA, w0).value))
-        pars['g3_center'].set(expr='g2_center')
 
     if fitting_method == 'leastsq':
 
@@ -2737,7 +3690,6 @@ def fit3(obj,
                        method=fitting_method,
                        options={'maxiter':1e6, 'maxfev':1e6} 
                        )                   
-
     
     if n_samples == 1: 
     
@@ -2756,6 +3708,7 @@ def fit3(obj,
             else:
     
                 print fit_report(out.params)
+
 
     if (plot) & (n_samples > 1):
 
@@ -2847,200 +3800,107 @@ def fit3(obj,
                 f.write(fittxt) 
 
     # Calculate stats 
-    
-    if fit_model == 'Hb':
-    
-        """
-        Only use broad Hb components to calculate stats 
-        """
-    
-        mod_broad_hb = ConstantModel()
-    
-        for i in range(nGaussians):
-            mod_broad_hb += GaussianModel(prefix='hb_b_{}_'.format(i))  
-    
-        pars_broad_hb = mod_broad_hb.make_params()
-       
-        pars_broad_hb['c'].value = 0.0
-       
-        for key, value in out.params.valuesdict().iteritems():
-            if key.startswith('hb_b_'):
-                pars_broad_hb[key].value = value 
 
-
-        integrand = lambda x: mod_broad_hb.eval(params=pars_broad_hb, x=np.array(x))
-    
-    elif fit_model == 'Ha':
-    
-        """
-        Only use broad Hb components to calculate stats 
-        """
-    
-        mod_broad_ha = ConstantModel()
-    
-        for i in range(nGaussians):
-            mod_broad_ha += GaussianModel(prefix='ha_b_{}_'.format(i))  
-    
-        pars_broad_ha = mod_broad_ha.make_params()
-       
-        pars_broad_ha['c'].value = 0.0
-       
-        for key, value in out.params.valuesdict().iteritems():
-            if key.startswith('ha_b_'):
-                pars_broad_ha[key].value = value 
-                
-    
-        integrand = lambda x: mod_broad_ha.eval(params=pars_broad_ha, x=np.array(x))    
-    
-    else:
-    
-        integrand = lambda x: mod.eval(params=out.params, x=np.array(x))
-    
-    # Calculate FWHM of distribution
     if line_region.unit == u.AA:
         line_region = wave2doppler(line_region, w0)
-    
-    dv = 1.0 # i think if this was anything else might need to change intergration.
-    xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
-    
-    norm = np.sum(integrand(xs) * dv)
-    pdf = integrand(xs) / norm
-    cdf = np.cumsum(pdf)
-    cdf_r = np.cumsum(pdf[::-1])[::-1] # reverse cumsum
 
-    # max of line
-    peak_flux = np.max(integrand(xs)) / spec_norm
-    
-    func_center = xs[np.argmax(pdf)] 
-    
-    half_max = np.max(pdf) / 2.0
-    
-    i = 0
-    while pdf[i] < half_max:
-        i+=1
-    
-    root1 = xs[i]
-    
-    i = 0
-    while pdf[-i] < half_max:
-        i+=1
-    
-    root2 = xs[-i]
-    
-    md = xs[np.argmin( np.abs( cdf - 0.5))]
-    
-    m = np.sum(xs * pdf * dv)
-    
-    v = np.sum( (xs-m)**2 * pdf * dv )
-    sd = np.sqrt(v)
-    
-    # Equivalent width
-    flux_line = integrand(xs)
-    xs_wav = doppler2wave(xs*xscale*(u.km/u.s), w0)
-    
-    if subtract_fe is True:
-        flux_bkgd = resid(params=bkgdpars_k, 
-                          x=xs_wav.value, 
-                          model=bkgdmod,
-                          sp_fe=sp_fe)
-    
-    if subtract_fe is False:
+    if fit_model == 'OIII':
 
-        flux_bkgd = resid(params=bkgdpars_k, 
-                          x=xs_wav.value, 
-                          model=bkgdmod)
-    
-    f = (flux_line + flux_bkgd) / flux_bkgd
-    eqw = (f[:-1] - 1.0) * np.diff(xs_wav.value)
-    eqw = np.nansum(eqw)
-    
-    # Broad luminosity
-    lumdist = cosmoWMAP.luminosity_distance(z).to(u.cm)        
-    broad_lum = np.sum(integrand(xs)[:-1] * np.diff(xs_wav.value)) * (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm 
-    
-    if fit_model == 'Ha':       
-        
-        # I know that the Gaussians are normalised, so the area is just the amplitude, so surely
-        # I shouldn't have to do this function evaluation. 
-
-        broad_fwhms = np.zeros(nGaussians)
-        broad_cens = np.zeros(nGaussians)
-        broad_amps = np.zeros(nGaussians)
-
-        for i in range(nGaussians):   
-            broad_fwhms[i] = np.array(out.params['ha_b_{}_fwhm'.format(i)].value)
-            broad_cens[i] = np.array(out.params['ha_b_{}_center'.format(i)].value)
-            broad_amps[i] = np.array(out.params['ha_b_{}_amplitude'.format(i)].value)
-
-        inds = np.argsort(broad_fwhms)[::-1] # sorts in ascending order
-            
-        broad_fwhms = broad_fwhms[inds]
-        broad_cens = broad_cens[inds]
-        broad_amps = broad_amps[inds]
-
-        if len(broad_fwhms) == 1:
-
-            broad_fwhms = np.append(broad_fwhms, np.nan)
-            broad_cens = np.append(broad_cens, np.nan)
-            broad_amps = np.append(broad_amps, np.nan)
-
-            very_broad_frac = np.nan 
-
-        else: 
-
-            very_broad_mod = GaussianModel()
-            very_broad_pars = very_broad_mod.make_params()
-
-            for key, value in out.params.valuesdict().iteritems():
-                if key.startswith('ha_b_{}'.format(inds[0])):
-                    very_broad_pars[key.replace('ha_b_{}_'.format(inds[0]), '')].value = value 
-         
-            quite_broad_mod = GaussianModel()
-            quite_broad_pars = quite_broad_mod.make_params()
-
-            for key, value in out.params.valuesdict().iteritems():
-                if key.startswith('ha_b_{}'.format(inds[1])):
-                    quite_broad_pars[key.replace('ha_b_{}_'.format(inds[1]), '')].value = value 
-
-            very_broad_integrand = very_broad_mod.eval(params=very_broad_pars, x=np.array(xs))
-            quite_broad_integrand = quite_broad_mod.eval(params=quite_broad_pars, x=np.array(xs))
-
-            very_broad_frac = np.sum(very_broad_integrand) / (np.sum(quite_broad_integrand) + np.sum(very_broad_integrand))
+        fit_out = get_stats_oiii(out,
+                                 xscale=xscale, 
+                                 w0=w0,
+                                 plot_title=plot_title)
 
 
-        narrow_mod = GaussianModel()
-        narrow_pars = narrow_mod.make_params()
-        narrow_pars['amplitude'].value = out.params['ha_n_amplitude'].value
-        narrow_pars['sigma'].value = out.params['ha_n_sigma'].value 
-        narrow_pars['center'].value = out.params['ha_n_center'].value 
-    
-        narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
-                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
-    
-        narrow_fwhm = out.params['ha_n_fwhm'].value 
-        narrow_voff = out.params['ha_n_center'].value 
-    
-        oiii_5007_eqw = np.nan 
-        oiii_5007_lum = np.nan * (u.erg / u.s)
-        oiii_5007_n_lum = np.nan * (u.erg / u.s)
-        oiii_5007_b_lum = np.nan * (u.erg / u.s)
-        oiii_5007_fwhm = np.nan
-        oiii_5007_n_fwhm = np.nan 
-        oiii_5007_b_fwhm = np.nan 
-        oiii_5007_b_voff = np.nan 
-        oiii_5007_05_percentile = np.nan
-        oiii_5007_025_percentile = np.nan
-        oiii_5007_01_percentile = np.nan
+    elif fit_model == 'Hb':
+
+        fit_out = get_stats_hb(out=out,
+                               line_region=line_region,
+                               xscale=xscale,
+                               w0=w0,
+                               bkgdmod=bkgdmod,
+                               bkgdpars_k=bkgdpars_k,
+                               subtract_fe=subtract_fe,
+                               spec_norm=spec_norm,
+                               sp_fe=sp_fe,
+                               z=z,
+                               mod=mod,
+                               nGaussians=nGaussians,
+                               plot_title=plot_title,
+                               hb_narrow=hb_narrow)
 
 
-        #######################################################################
-        """
-        Nicely print out important fitting info
-        """     
-        
+
+    elif fit_model == 'Ha':
+
+        fit_out = get_stats_ha(out=out,
+                               line_region=line_region,
+                               xscale=xscale,
+                               w0=w0,
+                               bkgdmod=bkgdmod,
+                               bkgdpars_k=bkgdpars_k,
+                               subtract_fe=subtract_fe,
+                               spec_norm=spec_norm,
+                               sp_fe=sp_fe,
+                               z=z,
+                               mod=mod,
+                               nGaussians=nGaussians,
+                               plot_title=plot_title)
+
+    elif (fit_model == 'GaussHermite') | (fit_model == 'siiv'):
+
+        fit_out = get_stats_gh(out=out,
+                               line_region=line_region,
+                               xscale=xscale,
+                               w0=w0,
+                               bkgdmod=bkgdmod,
+                               bkgdpars_k=bkgdpars_k,
+                               subtract_fe=subtract_fe,
+                               spec_norm=spec_norm,
+                               sp_fe=sp_fe,
+                               z=z,
+                               mod=mod,
+                               n_samples=n_samples,
+                               verbose=verbose,
+                               plot_title=plot_title)
+
+    elif fit_model == 'MultiGauss':
+
+        fit_out = get_stats_multigauss(out=out,
+                                       line_region=line_region,
+                                       xscale=xscale,
+                                       w0=w0,
+                                       bkgdmod=bkgdmod,
+                                       bkgdpars_k=bkgdpars_k,
+                                       subtract_fe=subtract_fe,
+                                       sp_fe=sp_fe,
+                                       spec_norm=spec_norm,
+                                       z=z,
+                                       mod=mod,
+                                       nGaussians=nGaussians,
+                                       plot_title=plot_title)
+
+    fit_out['redchi'] = out.redchi
+    fit_out['snr'] = snr_k
+    fit_out['dv'] = spec_dv
+    fit_out['monolum'] = np.log10(mono_lum_k)
+    fit_out['fe_ew'] = eqw_fe_k
+
+    
+    if n_samples == 1:
+
         if verbose: 
 
-            if n_samples == 1: 
+            print '\n'
+            print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum_k)) 
+            print '\n'
+    
+            if emission_line == 'Ha':
+    
+                """
+                Nicely print out important fitting info
+                """     
+    
                 if out.params['ha_n_sigma'].vary is True:
                     print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(out.params['ha_n_sigma'].value * 2.35, 
                                                                                                                       out.params['ha_n_sigma'].init_value * 2.35, 
@@ -3050,7 +3910,7 @@ def fit3(obj,
                 else:
                     print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(out.params['ha_n_sigma'].value * 2.35, 
                                                                      out.params['ha_n_sigma'].vary) 
-        
+                
                 if out.params['ha_n_center'].vary is True:
                     print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(out.params['ha_n_center'].value, 
                                                                                                                         out.params['ha_n_center'].init_value, 
@@ -3059,500 +3919,144 @@ def fit3(obj,
                                                                                                                         out.params['ha_n_center'].max) 
                 else:
                     print 'Narrow Center = {0:.1f}, Vary = {1}'.format(out.params['ha_n_center'].value, 
-                                                                       out.params['ha_n_center'].vary)     
-                                                                 
-                                                                 
-                                                        
+                                                                       out.params['ha_n_center'].vary) 
     
+                print fit_out['name'] + ',',\
+                      format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+                      format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
+                      format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
+                      format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
+                      format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
+                      format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
+                      format(fit_out['cen_1'], '.2f') + ',' if ~np.isnan(fit_out['cen_1']) else ',',\
+                      format(fit_out['cen_2'], '.2f') + ',' if ~np.isnan(fit_out['cen_2']) else ',',\
+                      format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
+                      format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+                      format(fit_out['amplitude_1'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_1']) else ',',\
+                      format(fit_out['amplitude_2'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_2']) else ',',\
+                      format(fit_out['very_broad_frac'], '.2f') + ',' if ~np.isnan(fit_out['very_broad_frac']) else ',',\
+                      format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
+                      format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
+                      format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
+                      format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
     
-    
-    elif fit_model == 'Hb':    
-
-        broad_fwhms = np.zeros(nGaussians)
-        broad_cens = np.zeros(nGaussians)
-        broad_amps = np.zeros(nGaussians)
-
-        for i in range(nGaussians):   
-            broad_fwhms[i] = np.array(out.params['hb_b_{}_fwhm'.format(i)].value)
-            broad_cens[i] = np.array(out.params['hb_b_{}_center'.format(i)].value)
-            broad_amps[i] = np.array(out.params['hb_b_{}_amplitude'.format(i)].value)
-
-        inds = np.argsort(broad_fwhms)[::-1]
-
-        broad_fwhms = broad_fwhms[inds]
-        broad_cens = broad_cens[inds]
-        broad_amps = broad_amps[inds]
-
-        if len(broad_fwhms) == 1:
-
-            broad_fwhms = np.append(broad_fwhms, np.nan)
-            broad_cens = np.append(broad_cens, np.nan)
-            broad_amps = np.append(broad_amps, np.nan)
-
-            very_broad_frac = np.nan 
-
-        else: 
-
-            very_broad_mod = GaussianModel()
-            very_broad_pars = very_broad_mod.make_params()
-
-            for key, value in out.params.valuesdict().iteritems():
-                if key.startswith('hb_b_{}'.format(inds[0])):
-                    very_broad_pars[key.replace('hb_b_{}_'.format(inds[0]), '')].value = value 
-         
-            quite_broad_mod = GaussianModel()
-            quite_broad_pars = quite_broad_mod.make_params()
-
-            for key, value in out.params.valuesdict().iteritems():
-                if key.startswith('hb_b_{}'.format(inds[1])):
-                    quite_broad_pars[key.replace('hb_b_{}_'.format(inds[1]), '')].value = value 
-
-            very_broad_integrand = very_broad_mod.eval(params=very_broad_pars, x=np.array(xs))
-            quite_broad_integrand = quite_broad_mod.eval(params=quite_broad_pars, x=np.array(xs))
-
-            very_broad_frac = np.sum(very_broad_integrand) / (np.sum(quite_broad_integrand) + np.sum(very_broad_integrand))
-
-   
-        oiii_5007_b_mod = GaussianModel()
-        oiii_5007_b_pars = oiii_5007_b_mod.make_params() 
-    
-        oiii_5007_b_pars['amplitude'].value = out.params['oiii_5007_b_amplitude'].value
-        oiii_5007_b_pars['sigma'].value = out.params['oiii_5007_b_sigma'].value 
-        oiii_5007_b_pars['center'].value = out.params['oiii_5007_b_center'].value 
-    
-        oiii_5007_b_xs = np.arange(oiii_5007_b_pars['center'].value - 10000.0, 
-                                   oiii_5007_b_pars['center'].value + 10000.0, 
-                                   dv)
-    
-        oiii_5007_b_xs_wav = doppler2wave(oiii_5007_b_xs*(u.km/u.s), w0) 
-    
-    
-        oiii_5007_b_lum = np.sum(oiii_5007_b_mod.eval(params=oiii_5007_b_pars, x=oiii_5007_b_xs)[:-1] * np.diff(oiii_5007_b_xs_wav.value)) * \
-                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
-    
-        oiii_5007_b_fwhm = oiii_5007_b_pars['sigma'].value * 2.35 
-    
-        # Velocity of broad component of OIII relative to narrow component
-        oiii_5007_b_voff = out.params['oiii_5007_b_center_delta'].value  
-
-        oiii_5007_n_mod = GaussianModel()
-        oiii_5007_n_pars = oiii_5007_n_mod.make_params() 
-    
-        oiii_5007_n_pars['amplitude'].value = out.params['oiii_5007_n_amplitude'].value
-        oiii_5007_n_pars['sigma'].value = out.params['oiii_5007_n_sigma'].value 
-        oiii_5007_n_pars['center'].value = out.params['oiii_5007_n_center'].value 
-    
-        oiii_5007_n_xs = np.arange(oiii_5007_n_pars['center'].value - 10000.0, 
-                                   oiii_5007_n_pars['center'].value + 10000.0, 
-                                   dv)
-    
-        oiii_5007_n_xs_wav = doppler2wave(oiii_5007_n_xs*(u.km/u.s), w0) 
-    
-    
-        oiii_5007_n_lum = np.sum(oiii_5007_n_mod.eval(params=oiii_5007_n_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
-                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
-    
-        oiii_5007_n_fwhm = oiii_5007_n_pars['sigma'].value * 2.35 
-           
-        oiii_5007_mod = GaussianModel(prefix='oiii_5007_n_') + GaussianModel(prefix='oiii_5007_b_')
-        oiii_5007_pars = oiii_5007_mod.make_params() 
-    
-        oiii_5007_pars['oiii_5007_n_amplitude'].value = out.params['oiii_5007_n_amplitude'].value
-        oiii_5007_pars['oiii_5007_n_sigma'].value = out.params['oiii_5007_n_sigma'].value 
-        oiii_5007_pars['oiii_5007_n_center'].value = out.params['oiii_5007_n_center'].value 
-        oiii_5007_pars['oiii_5007_b_amplitude'].value = out.params['oiii_5007_b_amplitude'].value
-        oiii_5007_pars['oiii_5007_b_sigma'].value = out.params['oiii_5007_b_sigma'].value 
-        oiii_5007_pars['oiii_5007_b_center'].value = out.params['oiii_5007_b_center'].value 
-    
-    
-        flux_line = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
-    
-    
-        if subtract_fe is True:
-
-            flux_bkgd = resid(params=bkgdpars_k, 
-                              x=oiii_5007_n_xs_wav.value, 
-                              model=bkgdmod,
-                              sp_fe=sp_fe)
-    
-        if subtract_fe is False:
-
-            flux_bkgd = resid(params=bkgdpars_k, 
-                              x=oiii_5007_n_xs_wav.value, 
-                              model=bkgdmod)
-    
-        f = (flux_line + flux_bkgd) / flux_bkgd 
-        oiii_5007_eqw = (f[:-1] - 1.0) * np.diff(oiii_5007_n_xs_wav.value)
-        oiii_5007_eqw = np.nansum(oiii_5007_eqw)
-    
-        oiii_5007_lum = np.sum(oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)[:-1] * np.diff(oiii_5007_n_xs_wav.value)) * \
-                    (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm  
-    
-        oiii_5007_pdf = oiii_5007_mod.eval(params=oiii_5007_pars, x=oiii_5007_n_xs)
-        half_max = np.max(oiii_5007_pdf) / 2.0
-    
-        i = 0
-        while oiii_5007_pdf[i] < half_max:
-            i+=1
-    
-        oiii_5007_root1 = oiii_5007_n_xs[i]
-    
-        i = 0
-        while oiii_5007_pdf[-i] < half_max:
-            i+=1
-    
-        oiii_5007_root2 = oiii_5007_n_xs[-i]
-        
-        oiii_5007_fwhm = oiii_5007_root2 - oiii_5007_root1
-
-        # median for blueshift 
-        oiii_5007_norm = np.sum(oiii_5007_pdf * dv)
-        oiii_5007_cdf = np.cumsum(oiii_5007_pdf / oiii_5007_norm)       
-        oiii_5007_05_percentile = out.params['oiii_5007_n_center'].value - oiii_5007_n_xs[np.argmin( np.abs(oiii_5007_cdf - 0.5))]
-
-        # 0.25 quartile OIII composite 
-        oiii_5007_025_percentile = out.params['oiii_5007_n_center'].value - oiii_5007_n_xs[np.argmin( np.abs(oiii_5007_cdf - 0.25))]
-        oiii_5007_01_percentile = out.params['oiii_5007_n_center'].value - oiii_5007_n_xs[np.argmin( np.abs(oiii_5007_cdf - 0.1))]
-
-
-        #-------------------------------------------------------------------------------------------
-    
-        narrow_fwhm = out.params['oiii_5007_n_sigma'].value * 2.35 
-        narrow_voff = out.params['oiii_5007_n_center'].value  - wave2doppler(5008.239*u.AA, w0).value  
-
-        if hb_narrow is True:
-    
-            narrow_mod = GaussianModel()
-            narrow_pars = narrow_mod.make_params()
-            narrow_pars['amplitude'].value = out.params['hb_n_amplitude'].value
-            narrow_pars['sigma'].value = out.params['hb_n_sigma'].value 
-            narrow_pars['center'].value = out.params['hb_n_center'].value 
-    
-            narrow_lum = np.sum(narrow_mod.eval(params=narrow_pars, x=xs)[:-1] * np.diff(xs_wav.value)) * \
-                        (u.erg / u.s / u.cm / u.cm) * (1.0 + z) * 4.0 * math.pi * lumdist**2  / spec_norm
-    
-        
-            #######################################################################
-            """
-            Nicely print out important fitting info
-            """     
-            
-            if verbose: 
-
-                if n_samples == 1:
-    
-                    if out.params['oiii_5007_n_sigma'].vary is True:
-    
-    
-                        print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(out.params['oiii_5007_n_sigma'].value * 2.35, 
-                                                                                                              out.params['oiii_5007_n_sigma'].init_value * 2.35, 
-                                                                                                              out.params['oiii_5007_n_sigma'].min * 2.35, 
-                                                                                                              out.params['oiii_5007_n_sigma'].max * 2.35) 
-                    else:
-                        print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(out.params['oiii_5007_n_sigma'].value * 2.35, 
-                                                                         out.params['oiii_5007_n_sigma'].vary) 
-            
-                    if out.params['oiii_5007_n_center'].vary is True:
-                        print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(out.params['oiii_5007_n_center'].value, 
-                                                                                                                out.params['oiii_5007_n_center'].init_value, 
-                                                                                                                out.params['oiii_5007_n_center'].min, 
-                                                                                                                out.params['oiii_5007_n_center'].max) 
-                    else:
-                        print 'Narrow Center = {0:.1f}, Vary = {1}'.format(out.params['oiii_5007_n_center'].value, 
-                                                                           out.params['oiii_5007_n_center'].vary)     
-    
-        else:
-    
-            narrow_lum = np.nan * (u.erg / u.s)          
-    
-    elif fit_model == 'GaussHermite':
-      
-        narrow_lum = np.nan * (u.erg / u.s)
-        narrow_fwhm = np.nan 
-        narrow_voff = np.nan 
-        oiii_5007_eqw = np.nan 
-        oiii_5007_lum = np.nan * (u.erg / u.s)
-        oiii_5007_n_lum = np.nan * (u.erg / u.s)
-        oiii_5007_b_lum = np.nan * (u.erg / u.s)
-        oiii_5007_fwhm = np.nan 
-        oiii_5007_n_fwhm = np.nan 
-        oiii_5007_b_fwhm = np.nan 
-        oiii_5007_b_voff = np.nan
-        oiii_5007_05_percentile = np.nan 
-        oiii_5007_025_percentile = np.nan
-        oiii_5007_01_percentile = np.nan
-
-        broad_fwhms = np.repeat(np.nan, 3)
-        broad_cens = np.repeat(np.nan, 3)
-        broad_amps = np.repeat(np.nan, 3)
-
-        very_broad_frac = np.nan
-
-    elif fit_model == 'MultiGauss':
-
-        broad_fwhms = np.zeros(nGaussians)
-        broad_cens = np.zeros(nGaussians)
-        broad_amps = np.zeros(nGaussians)
-
-        for i in range(nGaussians):   
-            broad_fwhms[i] = np.array(out.params['g{}_fwhm'.format(i)].value)
-            broad_cens[i] = np.array(out.params['g{}_center'.format(i)].value)
-            broad_amps[i] = np.array(out.params['g{}_amplitude'.format(i)].value)
-
-        inds = np.argsort(broad_fwhms)[::-1]
-
-        broad_fwhms = broad_fwhms[inds]
-        broad_cens = broad_cens[inds]
-        broad_amps = broad_amps[inds]
-
-        if len(broad_fwhms) == 1:
-
-            broad_fwhms = np.append(broad_fwhms, np.nan)
-            broad_cens = np.append(broad_cens, np.nan)
-            broad_amps = np.append(broad_amps, np.nan)
-
-            very_broad_frac = np.nan 
-
-        else: 
-
-            very_broad_mod = GaussianModel()
-            very_broad_pars = very_broad_mod.make_params()
-
-            for key, value in out.params.valuesdict().iteritems():
-                if key.startswith('g{}'.format(inds[0])):
-                    very_broad_pars[key.replace('g{}_'.format(inds[0]), '')].value = value 
-         
-            quite_broad_mod = GaussianModel()
-            quite_broad_pars = quite_broad_mod.make_params()
-
-            for key, value in out.params.valuesdict().iteritems():
-                if key.startswith('g{}'.format(inds[1])):
-                    quite_broad_pars[key.replace('g{}_'.format(inds[1]), '')].value = value 
-
-            very_broad_integrand = very_broad_mod.eval(params=very_broad_pars, x=np.array(xs))
-            quite_broad_integrand = quite_broad_mod.eval(params=quite_broad_pars, x=np.array(xs))
-
-            very_broad_frac = np.sum(very_broad_integrand) / (np.sum(quite_broad_integrand) + np.sum(very_broad_integrand))
-
-
-
-
-        narrow_lum = np.nan * (u.erg / u.s)
-        narrow_fwhm = np.nan 
-        narrow_voff = np.nan 
-        oiii_5007_eqw = np.nan 
-        oiii_5007_lum = np.nan * (u.erg / u.s)
-        oiii_5007_n_lum = np.nan * (u.erg / u.s)
-        oiii_5007_b_lum = np.nan * (u.erg / u.s)
-        oiii_5007_fwhm = np.nan 
-        oiii_5007_n_fwhm = np.nan 
-        oiii_5007_b_fwhm = np.nan 
-        oiii_5007_b_voff = np.nan
-        oiii_5007_05_percentile = np.nan 
-        oiii_5007_025_percentile = np.nan 
-        oiii_5007_01_percentile = np.nan
-
-    if fit_model == 'siiv':
-
-
-        broad_fwhm = [np.nan] * 3 
-        narrow_lum = np.nan * (u.erg / u.s)
-        narrow_fwhm = np.nan 
-        narrow_voff = np.nan 
-        oiii_5007_eqw = np.nan 
-        oiii_5007_lum = np.nan * (u.erg / u.s)
-        oiii_5007_n_lum = np.nan * (u.erg / u.s)
-        oiii_5007_b_lum = np.nan * (u.erg / u.s)
-        oiii_5007_fwhm = np.nan 
-        oiii_5007_n_fwhm = np.nan 
-        oiii_5007_b_fwhm = np.nan 
-        oiii_5007_b_voff = np.nan
-        oiii_5007_05_percentile = np.nan 
-        oiii_5007_025_percentile = np.nan 
-        oiii_5007_01_percentile = np.nan
-
-
-    fit_out = {'name':plot_title, 
-               'fwhm':(root2 - root1)*xscale,
-               'fwhm_1':broad_fwhms[0],
-               'fwhm_2':broad_fwhms[1],
-               'sigma': sd*xscale,
-               'median': md*xscale,
-               'cen': func_center*xscale,
-               'cen_1':broad_cens[0],
-               'cen_2':broad_cens[1],
-               'eqw': eqw,
-               'broad_lum':np.log10(broad_lum.value),
-               'peak':peak_flux, 
-               'amplitude_1':broad_amps[0],
-               'amplitude_2':broad_amps[1],
-               'very_broad_frac':very_broad_frac,
-               'narrow_fwhm':narrow_fwhm,
-               'narrow_lum':np.log10(narrow_lum.value) if ~np.isnan(narrow_lum.value) else np.nan,
-               'narrow_voff':narrow_voff, 
-               'oiii_5007_eqw':oiii_5007_eqw,
-               'oiii_5007_lum':np.log10(oiii_5007_lum.value) if ~np.isnan(oiii_5007_lum.value) else np.nan,
-               'oiii_5007_n_lum':np.log10(oiii_5007_n_lum.value) if ~np.isnan(oiii_5007_n_lum.value) else np.nan,
-               'oiii_5007_b_lum':np.log10(oiii_5007_b_lum.value) if ~np.isnan(oiii_5007_b_lum.value) else np.nan,
-               'oiii_fwhm':oiii_5007_fwhm,
-               'oiii_n_fwhm':oiii_5007_n_fwhm,
-               'oiii_b_fwhm':oiii_5007_b_fwhm,
-               'oiii_5007_b_voff':oiii_5007_b_voff,
-               'oiii_5007_05_percentile':oiii_5007_05_percentile, 
-               'oiii_5007_025_percentile':oiii_5007_025_percentile, 
-               'oiii_5007_01_percentile':oiii_5007_01_percentile, 
-               'redchi':out.redchi,
-               'snr':snr_k,
-               'dv':spec_dv, 
-               'monolum':np.log10(mono_lum_k),
-               'fe_ew':eqw_fe_k}
-    
-    if n_samples == 1: 
-
-        if verbose:
-
-            print '\n'
-            print 'Monochomatic luminosity at {0} = {1:.3f}'.format(mono_lum_wav, np.log10(mono_lum_k)) 
-            print '\n'
-        
-    
-            print  fit_out['name'] + '\n'\
-                  'Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm']), \
-                  'Narrow Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_1']), \
-                  'Very Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_2']), \
-                  'Broad sigma: {0:.2f} km/s \n'.format(fit_out['sigma']), \
-                  'Broad median: {0:.2f} km/s \n'.format(fit_out['median']), \
-                  'Broad centroid: {0:.2f} km/s \n'.format(fit_out['cen']), \
-                  'Broad EQW: {0:.2f} A \n'.format(fit_out['eqw']), \
-                  'Broad luminosity {0:.2f} erg/s \n'.format(fit_out['broad_lum']), \
-                  'Broad peak {0:.2e} erg/s \n'.format(fit_out['peak']), \
-                  'Narrow FWHM: {0:.2f} km/s \n'.format(fit_out['narrow_fwhm']), \
-                  'Narrow luminosity: {0:.2f} km/s \n'.format(fit_out['narrow_lum']), \
-                  'Narrow velocity: {0:.2f} km/s \n'.format(fit_out['narrow_voff']), \
-                  'OIII5007 EQW: {0:.2f} A \n'.format(fit_out['oiii_5007_eqw']),\
-                  'OIII5007 luminosity {0:.2f} erg/s \n'.format(fit_out['oiii_5007_lum']),\
-                  'OIII5007 narrow luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_n_lum']),\
-                  'OIII5007 broad luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_b_lum']),\
-                  'OIII5007 FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_fwhm']),\
-                  'OIII5007 narrow FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_n_fwhm']),\
-                  'OIII5007 broad FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_b_fwhm']),\
-                  'OIII5007 broad velocity: {0:.2f} km/s \n'.format(fit_out['oiii_5007_b_voff']),\
-                  'OIII5007 blueshift: {0:.2f} km/s \n'.format(fit_out['oiii_5007_05_percentile']),\
-                  'OIII5007 quartile: {0:.2f} km/s \n'.format(fit_out['oiii_5007_025_percentile']),\
-                  'OIII5007 0.1 percentile: {0:.2f} km/s \n'.format(fit_out['oiii_5007_01_percentile']),\
-                  'Reduced chi-squared: {0:.2f} \n'.format(fit_out['redchi']),\
-                  'S/N: {0:.2f} \n'.format(fit_out['snr']), \
-                  'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
-                  'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])
+                print  fit_out['name'] + '\n'\
+                       'Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm']), \
+                       'Narrow Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_1']), \
+                       'Very Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_2']), \
+                       'Broad sigma: {0:.2f} km/s \n'.format(fit_out['sigma']), \
+                       'Broad median: {0:.2f} km/s \n'.format(fit_out['median']), \
+                       'Broad centroid: {0:.2f} km/s \n'.format(fit_out['cen']), \
+                       'Broad EQW: {0:.2f} A \n'.format(fit_out['eqw']), \
+                       'Broad luminosity {0:.2f} erg/s \n'.format(fit_out['broad_lum']), \
+                       'Broad peak {0:.2e} erg/s \n'.format(fit_out['peak']), \
+                       'Narrow FWHM: {0:.2f} km/s \n'.format(fit_out['narrow_fwhm']), \
+                       'Narrow luminosity: {0:.2f} km/s \n'.format(fit_out['narrow_lum']), \
+                       'Narrow velocity: {0:.2f} km/s \n'.format(fit_out['narrow_voff']), \
+                       'Reduced chi-squared: {0:.2f} \n'.format(fit_out['redchi']),\
+                       'S/N: {0:.2f} \n'.format(fit_out['snr']), \
+                       'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
+                       'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])
     
             if emission_line == 'Hb':
-
+    
+                if out.params['oiii_5007_n_sigma'].vary is True:
+        
+        
+                    print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(out.params['oiii_5007_n_sigma'].value * 2.35, 
+                                                                                                          out.params['oiii_5007_n_sigma'].init_value * 2.35, 
+                                                                                                          out.params['oiii_5007_n_sigma'].min * 2.35, 
+                                                                                                          out.params['oiii_5007_n_sigma'].max * 2.35) 
+                else:
+                    print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(out.params['oiii_5007_n_sigma'].value * 2.35, 
+                                                                     out.params['oiii_5007_n_sigma'].vary) 
+            
+                if out.params['oiii_5007_n_center'].vary is True:
+                    print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Min = {2:.1f}, Max = {3:.1f}'.format(out.params['oiii_5007_n_center'].value, 
+                                                                                                            out.params['oiii_5007_n_center'].init_value, 
+                                                                                                            out.params['oiii_5007_n_center'].min, 
+                                                                                                            out.params['oiii_5007_n_center'].max) 
+                else:
+                    print 'Narrow Center = {0:.1f}, Vary = {1}'.format(out.params['oiii_5007_n_center'].value, 
+                                                                       out.params['oiii_5007_n_center'].vary)     
+        
+    
+       
+    
                 print fit_out['name'] + ',',\
-                format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
-                format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
-                format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
-                format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
-                format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
-                format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
-                format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
-                format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
-                format(fit_out['amplitude_1'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_1']) else ',',\
-                format(fit_out['amplitude_2'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_2']) else ',',\
-                format(fit_out['very_broad_frac'], '.2f') + ',' if ~np.isnan(fit_out['very_broad_frac']) else ',',\
-                format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
-                format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
-                format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
-                format(fit_out['oiii_5007_eqw'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_eqw']) else ',',\
-                format(fit_out['oiii_5007_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_lum']) else ',',\
-                format(fit_out['oiii_5007_n_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_n_lum']) else ',',\
-                format(fit_out['oiii_5007_b_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_lum']) else ',',\
-                format(fit_out['oiii_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_fwhm']) else ',',\
-                format(fit_out['oiii_n_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_n_fwhm']) else ',',\
-                format(fit_out['oiii_b_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_b_fwhm']) else ',',\
-                format(fit_out['oiii_5007_b_voff'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_voff']) else ',',\
-                format(fit_out['oiii_5007_05_percentile'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_05_percentile']) else ',',\
-                format(fit_out['oiii_5007_025_percentile'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_025_percentile']) else ',',\
-                format(fit_out['oiii_5007_01_percentile'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_01_percentile']) else ',',\
-                format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
-
-
-                # print  fit_out['name'] + ','\
-                #       '{0:.2f},'.format(fit_out['fwhm']), \
-                #       '{0:.2f},'.format(fit_out['sigma']), \
-                #       '{0:.2f},'.format(fit_out['median']), \
-                #       '{0:.2f},'.format(fit_out['cen']), \
-                #       '{0:.2f},'.format(fit_out['eqw']), \
-                #       '{0:.2f},'.format(fit_out['broad_lum']), \
-                #       '{0:.2f},'.format(fit_out['narrow_fwhm']), \
-                #       '{0:.2f},'.format(fit_out['narrow_lum']), \
-                #       '{0:.2f},'.format(fit_out['narrow_voff']), \
-                #       '{0:.2f},'.format(fit_out['oiii_5007_eqw']),\
-                #       '{0:.2f},'.format(fit_out['oiii_5007_lum']),\
-                #       '{0:.2f},'.format(fit_out['oiii_5007_n_lum']),\
-                #       '{0:.2f},'.format(fit_out['oiii_5007_b_lum']),\
-                #       '{0:.2f},'.format(fit_out['oiii_fwhm']),\
-                #       '{0:.2f},'.format(fit_out['oiii_n_fwhm']),\
-                #       '{0:.2f},'.format(fit_out['oiii_b_fwhm']),\
-                #       '{0:.2f},'.format(fit_out['oiii_5007_b_voff']),\
-                #       '{0:.2f}'.format(fit_out['redchi'])          
+                      format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+                      format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
+                      format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
+                      format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
+                      format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
+                      format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
+                      format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
+                      format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+                      format(fit_out['amplitude_1'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_1']) else ',',\
+                      format(fit_out['amplitude_2'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_2']) else ',',\
+                      format(fit_out['very_broad_frac'], '.2f') + ',' if ~np.isnan(fit_out['very_broad_frac']) else ',',\
+                      format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
+                      format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
+                      format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
+                      format(fit_out['oiii_5007_eqw'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_eqw']) else ',',\
+                      format(fit_out['oiii_5007_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_lum']) else ',',\
+                      format(fit_out['oiii_5007_n_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_n_lum']) else ',',\
+                      format(fit_out['oiii_5007_b_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_lum']) else ',',\
+                      format(fit_out['oiii_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_fwhm']) else ',',\
+                      format(fit_out['oiii_n_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_n_fwhm']) else ',',\
+                      format(fit_out['oiii_b_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_b_fwhm']) else ',',\
+                      format(fit_out['oiii_5007_b_voff'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_b_voff']) else ',',\
+                      format(fit_out['oiii_5007_05_percentile'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_05_percentile']) else ',',\
+                      format(fit_out['oiii_5007_025_percentile'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_025_percentile']) else ',',\
+                      format(fit_out['oiii_5007_01_percentile'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_01_percentile']) else ',',\
+                      format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
+               
+                print '\n'
     
-
-            elif emission_line == 'Ha':
-
+                print  fit_out['name'] + '\n'\
+                      'Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm']), \
+                      'Narrow Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_1']), \
+                      'Very Broad FWHM: {0:.2f} km/s \n'.format(fit_out['fwhm_2']), \
+                      'Broad sigma: {0:.2f} km/s \n'.format(fit_out['sigma']), \
+                      'Broad median: {0:.2f} km/s \n'.format(fit_out['median']), \
+                      'Broad centroid: {0:.2f} km/s \n'.format(fit_out['cen']), \
+                      'Broad EQW: {0:.2f} A \n'.format(fit_out['eqw']), \
+                      'Broad luminosity {0:.2f} erg/s \n'.format(fit_out['broad_lum']), \
+                      'Broad peak {0:.2e} erg/s \n'.format(fit_out['peak']), \
+                      'Narrow FWHM: {0:.2f} km/s \n'.format(fit_out['narrow_fwhm']), \
+                      'Narrow luminosity: {0:.2f} km/s \n'.format(fit_out['narrow_lum']), \
+                      'Narrow velocity: {0:.2f} km/s \n'.format(fit_out['narrow_voff']), \
+                      'OIII5007 EQW: {0:.2f} A \n'.format(fit_out['oiii_5007_eqw']),\
+                      'OIII5007 luminosity {0:.2f} erg/s \n'.format(fit_out['oiii_5007_lum']),\
+                      'OIII5007 narrow luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_n_lum']),\
+                      'OIII5007 broad luminosity: {0:.2f} erg/s \n'.format(fit_out['oiii_5007_b_lum']),\
+                      'OIII5007 FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_fwhm']),\
+                      'OIII5007 narrow FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_n_fwhm']),\
+                      'OIII5007 broad FWHM: {0:.2f} km/s \n'.format(fit_out['oiii_b_fwhm']),\
+                      'OIII5007 broad velocity: {0:.2f} km/s \n'.format(fit_out['oiii_5007_b_voff']),\
+                      'OIII5007 blueshift: {0:.2f} km/s \n'.format(fit_out['oiii_5007_05_percentile']),\
+                      'OIII5007 quartile: {0:.2f} km/s \n'.format(fit_out['oiii_5007_025_percentile']),\
+                      'OIII5007 0.1 percentile: {0:.2f} km/s \n'.format(fit_out['oiii_5007_01_percentile']),\
+                      'Reduced chi-squared: {0:.2f} \n'.format(fit_out['redchi']),\
+                      'S/N: {0:.2f} \n'.format(fit_out['snr']), \
+                      'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
+                      'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])
+    
+                
+    
+            if emission_line == 'CIV':
+    
                 print fit_out['name'] + ',',\
-                format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
-                format(fit_out['fwhm_1'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_1']) else ',',\
-                format(fit_out['fwhm_2'], '.2f') + ',' if ~np.isnan(fit_out['fwhm_2']) else ',',\
-                format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
-                format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
-                format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
-                format(fit_out['cen_1'], '.2f') + ',' if ~np.isnan(fit_out['cen_1']) else ',',\
-                format(fit_out['cen_2'], '.2f') + ',' if ~np.isnan(fit_out['cen_2']) else ',',\
-                format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
-                format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
-                format(fit_out['amplitude_1'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_1']) else ',',\
-                format(fit_out['amplitude_2'], '.2f') + ',' if ~np.isnan(fit_out['amplitude_2']) else ',',\
-                format(fit_out['very_broad_frac'], '.2f') + ',' if ~np.isnan(fit_out['very_broad_frac']) else ',',\
-                format(fit_out['narrow_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['narrow_fwhm']) else ',',\
-                format(fit_out['narrow_lum'], '.2f') + ',' if ~np.isnan(fit_out['narrow_lum']) else ',',\
-                format(fit_out['narrow_voff'], '.2f') + ',' if ~np.isnan(fit_out['narrow_voff']) else ',',\
-                format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
+                      format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
+                      format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
+                      format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
+                      format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
+                      format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
+                      format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
+                      format(fit_out['peak'], '.2e') + ',' if ~np.isnan(fit_out['peak']) else ',',\
+                      format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
 
-            else: 
-
-                print fit_out['name'] + ',',\
-                format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
-                format(fit_out['sigma'], '.2f') + ',' if ~np.isnan(fit_out['sigma']) else ',',\
-                format(fit_out['median'], '.2f') + ',' if ~np.isnan(fit_out['median']) else ',',\
-                format(fit_out['cen'], '.2f') + ',' if ~np.isnan(fit_out['cen']) else ',',\
-                format(fit_out['eqw'], '.2f') + ',' if ~np.isnan(fit_out['eqw']) else ',',\
-                format(fit_out['broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['broad_lum']) else ',',\
-                format(fit_out['peak'], '.2e') + ',' if ~np.isnan(fit_out['peak']) else ',',\
-                format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
-
-    
-    
-        if save_dir is not None:
-    
-            with open(os.path.join(save_dir, 'fit.txt'), 'a') as f:
-
-                f.write('\n \n')
-                f.write('Peak: {0:.2f} km/s \n'.format(func_center))
-                f.write('FWHM: {0:.2f} km/s \n'.format(root2 - root1))
-                f.write('Median: {0:.2f} km/s \n'.format(md))
-                f.write('Sigma: {0:.2f} km/s \n'.format(sd))
-                f.write('Reduced chi-squared: {0:.2f} \n'.format(out.redchi))
-                f.write('EQW: {0:.2f} A \n'.format(eqw))      
-    
-            my_line_props = line_props(plot_title, func_center, root2 - root1, md, sd, out.redchi, eqw)  
-            param_file = os.path.join(save_dir, 'line_props.txt')
-            parfile = open(param_file, 'w')
-            pickle.dump(my_line_props, parfile, -1)
-            parfile.close()
-          
-    
-    
-        if plot is True:
+        if plot:
     
             if subtract_fe is True:
                 flux_plot = flux - resid(params=bkgdpars_k, 
@@ -3693,22 +4197,113 @@ def fit_line(wav,
                 os.makedirs(save_dir)
 
             if emission_line == 'Ha':
-                columns = ['fwhm', 'fwhm_1', 'fwhm_2', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'redchi', 'snr', 'monolum', 'fe_ew'] 
+
+                columns = ['fwhm', 
+                           'fwhm_1', 
+                           'fwhm_2', 
+                           'sigma', 
+                           'median', 
+                           'cen', 
+                           'eqw', 
+                           'broad_lum', 
+                           'peak', 
+                           'narrow_fwhm', 
+                           'narrow_lum', 
+                           'narrow_voff', 
+                           'redchi', 
+                           'snr', 
+                           'monolum', 
+                           'fe_ew'] 
                 
             if emission_line == 'Hb':
-                columns = ['fwhm', 'fwhm_1', 'fwhm_2', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'narrow_fwhm', 'narrow_lum', 'narrow_voff', 'oiii_5007_eqw', 'oiii_5007_lum', 'oiii_5007_n_lum', 'oiii_5007_b_lum', 'oiii_fwhm', 'oiii_n_fwhm', 'oiii_b_fwhm', 'oiii_5007_b_voff', 'oiii_5007_05_percentile', 'oiii_5007_025_percentile', 'oiii_5007_01_percentile', 'redchi', 'snr', 'monolum', 'fe_ew']
+
+                columns = ['fwhm', 
+                           'fwhm_1', 
+                           'fwhm_2', 
+                           'sigma', 
+                           'median', 
+                           'cen', 
+                           'eqw', 
+                           'broad_lum', 
+                           'peak', 
+                           'narrow_fwhm', 
+                           'narrow_lum', 
+                           'narrow_voff', 
+                           'oiii_5007_eqw', 
+                           'oiii_5007_lum', 
+                           'oiii_5007_n_lum', 
+                           'oiii_5007_b_lum', 
+                           'oiii_fwhm', 
+                           'oiii_n_fwhm', 
+                           'oiii_b_fwhm', 
+                           'oiii_5007_b_voff', 
+                           'oiii_5007_05_percentile', 
+                           'oiii_5007_025_percentile', 
+                           'oiii_5007_01_percentile', 
+                           'redchi', 
+                           'snr', 
+                           'monolum', 
+                           'fe_ew']
                 
             if emission_line == 'CIV':
-                columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'redchi', 'snr', 'monolum']
+
+                columns = ['fwhm', 
+                           'sigma', 
+                           'median', 
+                           'cen', 
+                           'eqw', 
+                           'broad_lum', 
+                           'peak', 
+                           'redchi', 
+                           'snr', 
+                           'monolum']
 
             if pseudo_continuum_fit:
-                columns = ['monolum', 'fe_ew']
+
+                columns = ['monolum', 
+                           'fe_ew']
 
             if emission_line == 'siiv':
-                columns = ['fwhm', 'sigma', 'median', 'cen', 'eqw', 'broad_lum', 'peak', 'redchi', 'snr']
+
+                columns = ['fwhm', 
+                           'sigma', 
+                           'median', 
+                           'cen', 
+                           'eqw', 
+                           'broad_lum', 
+                           'peak', 
+                           'redchi', 
+                           'snr']
 
             if emission_line == 'MFICA':
-                columns = ['w1','w2','w3','w4','w5','w6','w7','w8','w9','w10','w11','w12'] 
+
+                columns = ['w1',
+                           'w2',
+                           'w3',
+                           'w4',
+                           'w5',
+                           'w6',
+                           'w7',
+                           'w8',
+                           'w9',
+                           'w10',
+                           'w11',
+                           'w12'] 
+
+            if emission_line == 'OIII':
+
+                columns = ['oiii_5007_v5', 
+                           'oiii_5007_v10', 
+                           'oiii_5007_v25', 
+                           'oiii_5007_v50', 
+                           'oiii_5007_v75', 
+                           'oiii_5007_v90', 
+                           'oiii_5007_v95',
+                           'oiii_5007_eqw', 
+                           'oiii_5007_lum']
+                              
+
+
 
             index = np.arange(n_samples)
 
@@ -3716,6 +4311,9 @@ def fit_line(wav,
 
 
     home_dir = expanduser("~")
+
+    # probably not ideal - just a way to get a more reliable z for the component fit
+    # without having to change the masterlist file, run make_html etc. 
 
     if (emission_line == 'MFICA') & (mfica_z is not None):
         z = mfica_z 
@@ -3769,6 +4367,19 @@ def fit_line(wav,
                            'w11':np.nan, 
                            'w12':np.nan,
                            'shift':np.nan}
+
+            elif emission_line == 'OIII':
+
+                fit_out = {'name':plot_title,
+                           'oiii_5007_v5':np.nan,
+                           'oiii_5007_v10':np.nan,
+                           'oiii_5007_v25':np.nan,
+                           'oiii_5007_v50':np.nan,
+                           'oiii_5007_v75':np.nan,
+                           'oiii_5007_v90':np.nan,
+                           'oiii_5007_v95':np.nan,
+                           'oiii_5007_eqw':np.nan,
+                           'oiii_5007_lum':np.nan}
 
             else: 
 
