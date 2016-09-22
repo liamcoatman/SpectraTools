@@ -2574,7 +2574,7 @@ def make_model_oiii(xscale=1.0,
 
     """
 
-    # xscale = 1.0 
+    xscale = 1.0 
 
     mod = GaussianModel(prefix='oiii_5007_n_')
     mod += GaussianModel(prefix='oiii_5007_b_')
@@ -2589,6 +2589,7 @@ def make_model_oiii(xscale=1.0,
 
     pars = mod.make_params() 
 
+   
     pars['oiii_4959_n_amplitude'].value = 1000.0
     pars['oiii_5007_n_amplitude'].value = 1000.0
     pars['oiii_4959_b_amplitude'].value = 1000.0 
@@ -2617,13 +2618,15 @@ def make_model_oiii(xscale=1.0,
 
     # pars['oiii_5007_b_amplitude'].set(expr='((oiii_5007_n_amplitude/oiii_5007_n_sigma)*oiii_5007_b_height_delta)*oiii_5007_b_sigma')
 
-    # Set 3:1 [OIII] peak ratio  
+    # Set 3:1 [OIII] peak ratio 
+    pars.add('oiii_peak_ratio') 
+    pars['oiii_peak_ratio'].value = 0.3333
+
+    pars['oiii_4959_n_amplitude'].set(expr='oiii_peak_ratio*oiii_5007_n_amplitude')
+    pars['oiii_4959_b_amplitude'].set(expr='oiii_peak_ratio*oiii_5007_b_amplitude')
+
     if fix_oiii_peak_ratio:
-        pars['oiii_4959_n_amplitude'].set(expr='0.3333*oiii_5007_n_amplitude')
-
-    # Also set 3:1 [OIII] peak ratio for broad components 
-    pars['oiii_4959_b_amplitude'].set(expr='0.3333*oiii_5007_b_amplitude')
-
+        pars['oiii_peak_ratio'].vary = False  
 
     # ---------------------------------------------------------------
 
@@ -2655,12 +2658,13 @@ def make_model_oiii(xscale=1.0,
     pars.add('oiii_5007_b_center_delta') 
     pars['oiii_5007_b_center_delta'].value = 500.0 
     pars['oiii_5007_b_center_delta'].min = -500.0
-    pars['oiii_5007_b_center_delta'].max = 1500.0
+    pars['oiii_5007_b_center_delta'].max = 2000.0
     pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
     pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_5007_b_center_delta')
 
     # Set broad components of OIII to have fixed relative velocity
-    # pars['oiii_4959_b_center'].set(expr = 'oiii_5007_b_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
+    # pars['oiii_4959_b_center'].set(expr = 'oiii_5007_b_center+{}'.format(\
+    #     wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
 
 
     #----------------------------------------------------------------------
@@ -2678,25 +2682,23 @@ def make_model_oiii(xscale=1.0,
         pars['hb_b_{}_sigma'.format(i)].min = 1000.0 / 2.35
         # pars['hb_b_{}_sigma'.format(i)].max = 20000.0 / 2.35
     
-    pars['oiii_5007_b_sigma'].max = 1200.0 / 2.35 
-    pars['oiii_5007_b_sigma'].min = 100.0 / 2.35 
-    pars['oiii_4959_b_sigma'].set(expr='oiii_5007_b_sigma')
-
     pars['oiii_5007_n_sigma'].min = 100.0 / 2.35 
-    pars['oiii_5007_n_sigma'].max = 1200.0 / 2.35 
-
-    # make sure broad component of oiii is broader than narrow component 
-    # pars.add('oiii_5007_n_sigma_delta')
-    # pars['oiii_5007_n_sigma_delta'].value = 0.5
-    # pars['oiii_5007_n_sigma_delta'].max = 0.9
-    # pars['oiii_5007_n_sigma'].set(expr='oiii_5007_b_sigma*oiii_5007_n_sigma_delta', min=100.0/2.35, max=1200.0/2.35)
-
+    pars['oiii_5007_n_sigma'].max = 2000.0 / 2.35 
 
     pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
 
     if hb_narrow is True: 
         pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
 
+    # make sure broad component of oiii is broader than narrow component 
+    # pars.add('oiii_5007_b_sigma_delta')
+    # pars['oiii_5007_b_sigma_delta'].value = 0.5
+    # pars['oiii_5007_b_sigma_delta'].max = 0.9
+    # pars['oiii_5007_n_sigma'].set(expr='oiii_5007_b_sigma*oiii_5007_n_sigma_delta', min=100.0/2.35, max=1200.0/2.35)
+
+    pars['oiii_5007_b_sigma'].max = 2000.0 / 2.35 
+    pars['oiii_5007_b_sigma'].min = 100.0 / 2.35 
+    pars['oiii_4959_b_sigma'].set(expr='oiii_5007_b_sigma')
 
     if oiii_broad_off:
 
@@ -3733,14 +3735,6 @@ def fit3(obj,
 
     elif fit_model == 'OIII':
 
-        ydat = ma.getdata(y[~ma.getmaskarray(y)])
-        vdat = ma.getdata(x[~ma.getmaskarray(x)])
-
-        p = ydat[ydat > 0.0] / np.sum(ydat[ydat > 0.0])
-        m = np.sum(vdat[ydat > 0.0] * p)
-        v = np.sum(p * (vdat[ydat > 0.0] - m)**2)
-        xscale = np.sqrt(v).value 
-        
         mod, pars = make_model_oiii(xscale=xscale,
                                     w0=w0,
                                     nGaussians=nGaussians, 
@@ -4176,7 +4170,7 @@ def fit3(obj,
                 
                 print 'OIII5007 EQW: {0:.2f} A \n'.format(fit_out['oiii_5007_eqw']),\
 
-                print  fit_out['name'] + ',',\
+                print  colored(fit_out['name'], 'red') + ',',\
                        format(fit_out['oiii_5007_v5'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_v5']) else ',',\
                        format(fit_out['oiii_5007_v10'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_v10']) else ',',\
                        format(fit_out['oiii_5007_v25'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_v25']) else ',',\
@@ -4187,8 +4181,24 @@ def fit3(obj,
                        format(fit_out['oiii_5007_eqw'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_eqw']) else ',',\
                        format(fit_out['oiii_5007_lum'], '.2f') if ~np.isnan(fit_out['oiii_5007_lum']) else ''
 
-            
-   
+                print '\n'
+                print colored('oiii_5007_n_fwhm', 'green'),\
+                      out.params['oiii_5007_n_sigma'].value*2.35,\
+                      colored(out.params['oiii_5007_n_sigma'].min*2.35, 'yellow'),\
+                      colored(out.params['oiii_5007_n_sigma'].max*2.35, 'red')
+                print colored('oiii_5007_b_fwhm', 'green'),\
+                      out.params['oiii_5007_b_sigma'].value*2.35,\
+                      colored(out.params['oiii_5007_b_sigma'].min*2.35, 'yellow'),\
+                      colored(out.params['oiii_5007_b_sigma'].max*2.35, 'red')
+                print colored('oiii_5007_n_center', 'green'),\
+                      out.params['oiii_5007_n_center'].value - wave2doppler(5008.239*u.AA, w0).value,\
+                      colored(out.params['oiii_5007_n_center'].min - wave2doppler(5008.239*u.AA, w0).value, 'yellow'),\
+                      colored(out.params['oiii_5007_n_center'].max - wave2doppler(5008.239*u.AA, w0).value, 'red') 
+                print colored('oiii_5007_b_center_delta', 'green'),\
+                      out.params['oiii_5007_b_center_delta'].value,\
+                      colored(out.params['oiii_5007_b_center_delta'].min, 'yellow'),\
+                      colored(out.params['oiii_5007_b_center_delta'].max, 'red')
+
         if plot:
     
             if subtract_fe is True:
