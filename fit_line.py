@@ -2941,7 +2941,10 @@ def get_stats_oiii(out,
                    sp_fe=None,
                    subtract_fe=True,
                    z=0.0,
-                   spec_norm=1.0):
+                   spec_norm=1.0,
+                   varray=None,
+                   farray=None,
+                   sarray=None):
 
     mod_oiii_5007 = GaussianModel(prefix='oiii_5007_b_') + GaussianModel(prefix='oiii_5007_n_') 
     mod_oiii_5007_pars = mod_oiii_5007.make_params() 
@@ -2980,12 +2983,31 @@ def get_stats_oiii(out,
     # absolute assymetry - not perfect because depends on somewhat arbitary
     # z_IR, but should do for now. 
 
-    xs_blue = np.arange(-10000.0, 0.0, dv) / xscale 
-    xs_red = np.arange(0.0, 10000.0, dv) / xscale 
+    # xs_blue = np.arange(-10000.0, 0.0, dv) / xscale 
+    # xs_red = np.arange(0.0, 10000.0, dv) / xscale 
 
-    A = (np.sum(integrand(xs_blue) * dv) - np.sum(integrand(xs_red) * dv)) / norm
+    # A = (np.sum(integrand(xs_blue) * dv) - np.sum(integrand(xs_red) * dv)) / norm
     # print A, 1.0 - 2.0*cdf[xs == 0.0]
    
+    # Calculate S/N of 5008 within w90 
+    varray = varray - wave2doppler(5008.239*u.AA, w0).value # center on OIII 
+
+    vmin = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf - 0.05))]))
+    vmax = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf - 0.95))]))
+    
+    varray = varray[vmin: vmax]
+    farray = farray[vmin: vmax]
+    sarray = sarray[vmin: vmax]
+
+    f = interp1d(xs*xscale, integrand(xs))
+    
+    # We use the model flux rather than the data to calculate the signal-to-noise
+    snr = np.median(f(varray) / sarray)
+
+    # FWHM. Not really well defined if double-peaked. 
+    # In this case need to use Peterson et al. (2004) perscription
+    fwhm = get_fwhm(xs*xscale, integrand(xs)) 
+
     fit_out = {'name':plot_title,
                'oiii_5007_v5':xs[np.argmin(np.abs(cdf - 0.05))],
                'oiii_5007_v10':xs[np.argmin(np.abs(cdf - 0.1))],
@@ -2996,7 +3018,8 @@ def get_stats_oiii(out,
                'oiii_5007_v95':xs[np.argmin(np.abs(cdf - 0.95))],
                'oiii_5007_eqw':oiii_5007_eqw,
                'oiii_5007_lum':np.log10(oiii_5007_lum.value),
-               'oiii_5007_A':A}
+               'oiii_5007_snr':snr,
+               'oiii_5007_fwhm':fwhm}
 
     return fit_out 
 
@@ -3912,7 +3935,10 @@ def fit3(obj,
                                  sp_fe=sp_fe,
                                  subtract_fe=subtract_fe,
                                  z=z,
-                                 spec_norm=spec_norm)
+                                 spec_norm=spec_norm,
+                                 varray=np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale),
+                                 farray=ma.getdata(y[~ma.getmaskarray(y)]),
+                                 sarray=ma.getdata(er[~ma.getmaskarray(er)]))
 
 
     elif fit_model == 'Hb':
@@ -4472,7 +4498,9 @@ def fit_line(wav,
                            'oiii_5007_v90', 
                            'oiii_5007_v95',
                            'oiii_5007_eqw', 
-                           'oiii_5007_lum']
+                           'oiii_5007_lum',
+                           'oiii_5007_snr',
+                           'oiii_5007_fwhm']
                               
 
 
@@ -4555,7 +4583,8 @@ def fit_line(wav,
                            'oiii_5007_v95':np.nan,
                            'oiii_5007_eqw':np.nan,
                            'oiii_5007_lum':np.nan,
-                           'oiii_5007_A':np.nan}
+                           'oiii_5007_snr':np.nan,
+                           'oiii_5007_fwhm':np.nan}
 
             else: 
 
