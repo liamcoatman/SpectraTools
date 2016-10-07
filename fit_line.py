@@ -214,6 +214,7 @@ def rebin(wa, fl, er, n):
     """ 
     
     # not sure if this is a good idea or not
+
     er[er <= 0.0] = 1.e6 
 
     remain = -(len(wa) % n) or None
@@ -1833,7 +1834,8 @@ def fit2(obj,
          plot_title,
          plot,
          save_dir,
-         show_continuum_fit): 
+         show_continuum_fit,
+         pseudo_continuum_fit): 
 
     k = obj[0]
     x = obj[1]
@@ -1913,6 +1915,7 @@ def fit2(obj,
         bkgdpars['fe_norm'].value = 0.05 
         bkgdpars['fe_shift'].value = 0.0
 
+
         out = minimize(resid,
                        bkgdpars,
                        kws={'x':ma.getdata(x[~ma.getmaskarray(x)]).value, 
@@ -1923,7 +1926,6 @@ def fit2(obj,
                        method='powell',
                        options={'maxiter':1e6, 'maxfev':1e6})
 
-   
         flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] = flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] - resid(params=out.params, x=ma.getdata(wav_array_fit_k[~ma.getmaskarray(wav_array_fit_k)]).value, model=bkgdmod, sp_fe=sp_fe)
         flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] = flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] - resid(params=out.params, x=ma.getdata(wav_array_plot_k[~ma.getmaskarray(wav_array_plot_k)]).value, model=bkgdmod, sp_fe=sp_fe)                  
 
@@ -1959,6 +1961,58 @@ def fit2(obj,
 
         if verbose:
             print 'Fe EW: {}'.format(eqw_fe)  
+
+
+        if pseudo_continuum_fit & (n_samples == 1): 
+
+            """ 
+            Temporary function to write out continuum (but not fe subtracted) spectrum 
+            """
+
+            mask_temp = (wav.value > 4000.0) & (wav.value < 5500.0) 
+            wav_array_cont_sub = wav.value[mask_temp]
+
+            fl_cont = PseudoContinuum(wav_array_cont_sub, 
+                                      out.params['amplitude'].value,
+                                      out.params['exponent'].value,
+                                      0.0,
+                                      out.params['fe_sd'].value,
+                                      out.params['fe_shift'].value,
+                                      sp_fe)
+
+            fl_fe = PseudoContinuum(wav_array_cont_sub, 
+                                    0.0,
+                                    0.0,
+                                    out.params['fe_norm'].value,
+                                    out.params['fe_sd'].value,
+                                    out.params['fe_shift'].value,
+                                    sp_fe)
+    
+
+            flux_array_cont_sub = flux[mask_temp] - fl_cont   
+            flux_array_sub = flux[mask_temp] - fl_cont - fl_fe         
+          
+
+            # with open(os.path.join(save_dir, 'spec_cont_subtracted.txt'), 'w') as f:
+            #     for ww, ff in zip(wav_array_cont_sub, flux_array_cont_sub):
+            #         f.write('{} {} \n'.format(ww, ff))
+
+            
+            fig, ax = plt.subplots()
+            
+            ax.plot(wav_array_cont_sub, flux_array_cont_sub, color='grey', alpha=0.4)
+            # ax.plot(wav_array_cont_sub, flux_array_sub, color='black', alpha=0.4)
+
+            ax.plot(wav_array_cont_sub, fl_fe, color='red')
+
+            ax.axhline(0, color='black', linestyle='--')
+
+            # ax.set_xlim(4656, 5400)
+            # ax.set_ylim(0, 0.7)
+
+            # fig.savefig('/home/lc585/OIIIPaper/fe_example.png')
+
+            plt.show() 
 
     if subtract_fe is False:
 
@@ -2069,27 +2123,6 @@ def fit2(obj,
             parfile.close()
 
 
-
-    # if pseudo_continuum_fit:
-
-    #     """
-    #     Only fitting PseudoContinuum - BROKEN SINCE MADE IN TO A FUNCTION! 
-    #     """
-
-    #     fit_out = {'name':plot_title,
-    #                'monolum':np.log10(mono_lum.value),
-    #                'fe_ew':eqw_fe} 
-
-    #     if n_samples == 1:       
-
-    #         return fit_out
-
-    #     else: 
-       
-    #         if save_dir is not None:
-    #             df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
-
-    #         return None 
 
 
 
@@ -2721,7 +2754,8 @@ def make_model_oiii(xscale=1.0,
         pars['oiii_5007_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
         pars['oiii_4959_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
         pars['oiii_4959_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
-        pars['hb_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
+        if hb_narrow is True:
+            pars['hb_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
         
         pars.add('oiii_scale') 
         pars['oiii_scale'].value = 1.0 
@@ -2731,14 +2765,15 @@ def make_model_oiii(xscale=1.0,
         pars['oiii_5007_b_amplitude'].set(value=236.18, vary=False, expr='oiii_scale*236.18', min=None, max=None)
         pars['oiii_4959_n_amplitude'].set(value=77.74, vary=False, expr='oiii_scale*77.74', min=None, max=None)
         pars['oiii_4959_b_amplitude'].set(value=78.72, vary=False, expr='oiii_scale*78.72', min=None, max=None)
-        pars['hb_n_amplitude'].set(value=53.24, vary=False, expr='oiii_scale*53.24', min=None, max=None)
+        if hb_narrow is True:
+            pars['hb_n_amplitude'].set(value=53.24, vary=False, expr='oiii_scale*53.24', min=None, max=None)
 
  
         pars.add('oiii_n_center_delta')
         pars['oiii_n_center_delta'].min = -500.0
         pars['oiii_n_center_delta'].max = 500.0
         pars['oiii_n_center_delta'].value = 0.0  
-        pars['oiii_n_center_delta'].vary = True  
+        pars['oiii_n_center_delta'].vary = False # Change this to true if want offset to vary.   
         
         pars.add('oiii_5007_center_fixed')
         pars['oiii_5007_center_fixed'].value = wave2doppler(5008.239*u.AA, w0).value
@@ -2750,7 +2785,8 @@ def make_model_oiii(xscale=1.0,
 
         pars['oiii_5007_n_center'].set(value=wave2doppler(5008.239*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_5007_center_fixed+oiii_n_center_delta')
         pars['oiii_4959_n_center'].set(value=wave2doppler(4960.295*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_4959_center_fixed+oiii_n_center_delta')
-        pars['hb_n_center'].set(value=0.0, vary=True, min=None, max=None, expr='oiii_n_center_delta')
+        if hb_narrow is True:
+            pars['hb_n_center'].set(value=0.0, vary=True, min=None, max=None, expr='oiii_n_center_delta')
 
         pars.add('oiii_5007_b_center_delta') 
         pars['oiii_5007_b_center_delta'].set(value=200.416080, vary=False, min=None, max=None, expr=None)
@@ -3019,7 +3055,8 @@ def get_stats_oiii(out,
                'oiii_5007_eqw':oiii_5007_eqw,
                'oiii_5007_lum':np.log10(oiii_5007_lum.value),
                'oiii_5007_snr':snr,
-               'oiii_5007_fwhm':fwhm}
+               'oiii_5007_fwhm':fwhm,
+               'redchi':out.redchi}
 
     return fit_out 
 
@@ -4225,6 +4262,8 @@ def fit3(obj,
                       colored(out.params['oiii_5007_b_center_delta'].min, 'yellow'),\
                       colored(out.params['oiii_5007_b_center_delta'].max, 'red')
 
+                print 'Reduced chi-squared: {}'.format(out.redchi) 
+
         if plot:
     
             if subtract_fe is True:
@@ -4500,7 +4539,8 @@ def fit_line(wav,
                            'oiii_5007_eqw', 
                            'oiii_5007_lum',
                            'oiii_5007_snr',
-                           'oiii_5007_fwhm']
+                           'oiii_5007_fwhm',
+                           'redchi']
                               
 
 
@@ -4584,7 +4624,8 @@ def fit_line(wav,
                            'oiii_5007_eqw':np.nan,
                            'oiii_5007_lum':np.nan,
                            'oiii_5007_snr':np.nan,
-                           'oiii_5007_fwhm':np.nan}
+                           'oiii_5007_fwhm':np.nan,
+                           'redchi':np.nan}
 
             else: 
 
@@ -5356,7 +5397,8 @@ def fit_line(wav,
                          plot_title = plot_title,
                          plot = plot,
                          save_dir = save_dir,
-                         show_continuum_fit = show_continuum_fit) 
+                         show_continuum_fit = show_continuum_fit,
+                         pseudo_continuum_fit=pseudo_continuum_fit) 
     
     
     
@@ -5373,7 +5415,9 @@ def fit_line(wav,
         else:
             
             out = map(fit2_p, fitobj)
-    
+
+           
+
         for k, o in enumerate(out):
     
             flux_array_fit[k, :] = o[0]
@@ -5381,9 +5425,28 @@ def fit_line(wav,
             mono_lum[k] = o[2].value
             eqw_fe[k] = o[3]
             bkgdpars.append(o[4])
+        
+
+            if pseudo_continuum_fit:
+
+                """
+                Only fitting PseudoContinuum 
+                This won't work if calculating errors in fe fit 
+                """
     
+                fit_out = {'name':plot_title,
+                           'monolum':np.log10(o[2].value),
+                           'fe_ew':o[3]} 
     
+                if n_samples == 1:       
+
+                    return fit_out
+
+                else:
+
+                    print 'THIS NEEDS FIXING'
     
+
     if (n_samples > 1) & (plot is True):
     
         fig = plt.figure(figsize=(6,10))
