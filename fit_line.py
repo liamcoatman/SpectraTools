@@ -324,7 +324,6 @@ def resid(params=None,
 
         if sigma is not None:
             weighted = np.sqrt(resids ** 2 / sigma ** 2) 
-
             return weighted
         else:
             return resids
@@ -1806,7 +1805,7 @@ def fit1(obj,
     eqw_fe = 0.0 
 
     if n_samples > 1: 
-        print plot_title, k
+        print plot_title, k, out.nfev
 
     return (flux_array_fit_k, flux_array_plot_k, mono_lum, eqw_fe, out.params)
 
@@ -1924,7 +1923,7 @@ def fit2(obj,
                             'sigma':ma.getdata(er[~ma.getmaskarray(er)]), 
                             'sp_fe':sp_fe},
                        method='powell',
-                       options={'maxiter':1e6, 'maxfev':1e6})
+                       options={'maxiter':1e4, 'maxfev':1e4})
 
         flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] = flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] - resid(params=out.params, x=ma.getdata(wav_array_fit_k[~ma.getmaskarray(wav_array_fit_k)]).value, model=bkgdmod, sp_fe=sp_fe)
         flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] = flux_array_plot_k[~ma.getmaskarray(wav_array_plot_k)] - resid(params=out.params, x=ma.getdata(wav_array_plot_k[~ma.getmaskarray(wav_array_plot_k)]).value, model=bkgdmod, sp_fe=sp_fe)                  
@@ -2068,7 +2067,7 @@ def fit2(obj,
     mono_lum = mono_flux * (1.0 + z) * 4.0 * math.pi * lumdist**2 * mono_lum_wav
 
     if n_samples > 1: 
-        print plot_title, k 
+        print plot_title, k, out.nfev 
 
 
     ######################################################################################################################
@@ -2980,7 +2979,8 @@ def get_stats_oiii(out,
                    spec_norm=1.0,
                    varray=None,
                    farray=None,
-                   sarray=None):
+                   sarray=None,
+                   nGaussians=1):
 
     mod_oiii_5007 = GaussianModel(prefix='oiii_5007_b_') + GaussianModel(prefix='oiii_5007_n_') 
     mod_oiii_5007_pars = mod_oiii_5007.make_params() 
@@ -3024,25 +3024,81 @@ def get_stats_oiii(out,
 
     # A = (np.sum(integrand(xs_blue) * dv) - np.sum(integrand(xs_red) * dv)) / norm
     # print A, 1.0 - 2.0*cdf[xs == 0.0]
+
+    #------------------------------------------------------------------------
    
     # Calculate S/N of 5008 within w90 
-    varray = varray - wave2doppler(5008.239*u.AA, w0).value # center on OIII 
+    varray_oiii = varray - wave2doppler(5008.239*u.AA, w0).value # center on OIII 
 
-    vmin = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf - 0.05))]))
-    vmax = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf - 0.95))]))
+    vmin_oiii = np.argmin(np.abs(varray_oiii - xs[np.argmin(np.abs(cdf - 0.05))]))
+    vmax_oiii = np.argmin(np.abs(varray_oiii - xs[np.argmin(np.abs(cdf - 0.95))]))
     
-    varray = varray[vmin: vmax]
-    farray = farray[vmin: vmax]
-    sarray = sarray[vmin: vmax]
+    varray_oiii = varray_oiii[vmin_oiii: vmax_oiii]
+    farray_oiii = farray[vmin_oiii: vmax_oiii]
+    sarray_oiii = sarray[vmin_oiii: vmax_oiii]
 
     f = interp1d(xs*xscale, integrand(xs))
     
     # We use the model flux rather than the data to calculate the signal-to-noise
-    snr = np.median(f(varray) / sarray)
+    snr_oiii = np.median(f(varray_oiii) / sarray_oiii)
+
+    #------------------------------------------------------------------------
+
+    # Calculate S/N of Hb within w90 
+
+    mod_broad_hb = ConstantModel()
+    
+    for i in range(nGaussians):
+        mod_broad_hb += GaussianModel(prefix='hb_b_{}_'.format(i))  
+    
+    pars_broad_hb = mod_broad_hb.make_params()
+    
+    pars_broad_hb['c'].value = 0.0
+    
+    for key, value in out.params.valuesdict().iteritems():
+        if key.startswith('hb_b_'):
+            pars_broad_hb[key].value = value 
+
+    integrand_hb = lambda x: mod_broad_hb.eval(params=pars_broad_hb, x=np.array(x))
+
+    norm_hb = np.sum(integrand_hb(xs) * dv)
+    pdf_hb = integrand_hb(xs) / norm_hb
+    cdf_hb = np.cumsum(pdf_hb)
+
+    vmin_hb = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf_hb - 0.10))]))
+    vmax_hb = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf_hb - 0.90))]))
+    
+    varray_hb = varray[vmin_hb: vmax_hb]
+    farray_hb = farray[vmin_hb: vmax_hb]
+    sarray_hb = sarray[vmin_hb: vmax_hb]
+
+    f_hb = interp1d(xs*xscale, integrand_hb(xs))
+    
+    # We use the model flux rather than the data to calculate the signal-to-noise
+    snr_hb = np.median(f_hb(varray_hb) / sarray_hb)
+
+    #------------------------------------------------------------------------
 
     # FWHM. Not really well defined if double-peaked. 
     # In this case need to use Peterson et al. (2004) perscription
     fwhm = get_fwhm(xs*xscale, integrand(xs)) 
+
+    # Get centroid of narrower broad hb gaussian to use for redshift
+    # almost always doesn't matter if use broader one, since peaks 
+    # are normally fixed. 
+
+    hb_centroids = np.array(out.params['hb_b_0_center'].value)
+    hb_fwhms = np.array(out.params['hb_b_0_fwhm'].value)
+
+    if nGaussians >= 2:
+        hb_centroids = np.append(hb_centroids, out.params['hb_b_1_center'].value)
+        hb_fwhms = np.append(hb_fwhms, out.params['hb_b_1_fwhm'].value)
+    if nGaussians >= 3:
+        hb_centroids = np.append(hb_centroids, out.params['hb_b_2_center'].value)
+        hb_fwhms = np.append(hb_fwhms, out.params['hb_b_2_fwhm'].value)
+
+    hb_centroids = np.atleast_1d(hb_centroids)
+    hb_fwhms = np.atleast_1d(hb_fwhms)
 
     fit_out = {'name':plot_title,
                'oiii_5007_v5':xs[np.argmin(np.abs(cdf - 0.05))],
@@ -3054,8 +3110,11 @@ def get_stats_oiii(out,
                'oiii_5007_v95':xs[np.argmin(np.abs(cdf - 0.95))],
                'oiii_5007_eqw':oiii_5007_eqw,
                'oiii_5007_lum':np.log10(oiii_5007_lum.value),
-               'oiii_5007_snr':snr,
+               'oiii_5007_snr':snr_oiii,
                'oiii_5007_fwhm':fwhm,
+               'oiii_peak_ratio':out.params['oiii_peak_ratio'].value, 
+               'hb_centroid':hb_centroids[np.argmin(hb_fwhms)],
+               'hb_snr':snr_hb, 
                'redchi':out.redchi}
 
     return fit_out 
@@ -3840,7 +3899,7 @@ def fit3(obj,
                                 'data':ma.getdata(y[~ma.getmaskarray(y)]),
                                 'sigma':ma.getdata(er[~ma.getmaskarray(er)])},
                            method=fitting_method,
-                           options={'maxiter':1e6, 'maxfev':1e6} 
+                           options={'maxiter':1e4, 'maxfev':1e4} 
                            )                   
     
     if n_samples == 1: 
@@ -3975,7 +4034,8 @@ def fit3(obj,
                                  spec_norm=spec_norm,
                                  varray=np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale),
                                  farray=ma.getdata(y[~ma.getmaskarray(y)]),
-                                 sarray=ma.getdata(er[~ma.getmaskarray(er)]))
+                                 sarray=ma.getdata(er[~ma.getmaskarray(er)]),
+                                 nGaussians=nGaussians)
 
 
     elif fit_model == 'Hb':
@@ -4242,7 +4302,8 @@ def fit3(obj,
                        format(fit_out['oiii_5007_v90'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_v90']) else ',',\
                        format(fit_out['oiii_5007_v95'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_v95']) else ',',\
                        format(fit_out['oiii_5007_eqw'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_eqw']) else ',',\
-                       format(fit_out['oiii_5007_lum'], '.2f') if ~np.isnan(fit_out['oiii_5007_lum']) else ''
+                       format(fit_out['oiii_5007_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_lum']) else ',',\
+                       format(fit_out['oiii_peak_ratio'], '.2f') if ~np.isnan(fit_out['oiii_peak_ratio']) else ''
 
                 print '\n'
                 print colored('oiii_5007_n_fwhm', 'green'),\
@@ -4263,6 +4324,8 @@ def fit3(obj,
                       colored(out.params['oiii_5007_b_center_delta'].max, 'red')
 
                 print 'Reduced chi-squared: {}'.format(out.redchi) 
+
+                print 'OIII peak ratio: {}'.format(out.params['oiii_peak_ratio'].value)
 
         if plot:
     
@@ -4355,7 +4418,7 @@ def fit3(obj,
 
     else:
 
-        print plot_title, k
+        print plot_title, k, out.nfev 
     
     return fit_out 
 
@@ -4540,6 +4603,9 @@ def fit_line(wav,
                            'oiii_5007_lum',
                            'oiii_5007_snr',
                            'oiii_5007_fwhm',
+                           'oiii_peak_ratio',
+                           'hb_centroid',
+                           'hb_snr', 
                            'redchi']
                               
 
@@ -4583,6 +4649,7 @@ def fit_line(wav,
     n_elements = len(wav)
     n_elements_norebin = len(wav_norebin)
 
+
     # index of the region we want to fit
     if fitting_region.unit == (u.km/u.s):
         fitting_region = doppler2wave(fitting_region, w0)
@@ -4625,6 +4692,9 @@ def fit_line(wav,
                            'oiii_5007_lum':np.nan,
                            'oiii_5007_snr':np.nan,
                            'oiii_5007_fwhm':np.nan,
+                           'oiii_peak_ratio':np.nan,
+                           'hb_centroid':np.nan,
+                           'hb_snr':np.nan,
                            'redchi':np.nan}
 
             else: 
@@ -4663,9 +4733,6 @@ def fit_line(wav,
                            'dv':np.nan, 
                            'monolum':np.nan,
                            'fe_ew':np.nan}
-
-
-
             
             if save_dir is not None:
     
@@ -4704,21 +4771,11 @@ def fit_line(wav,
 
     if n_samples > 1: 
 
-        # print 'Warning loading flux array!'
         flux_array = np.asarray(np.random.normal(flux,
                                                  err,
                                                  size=(n_samples, n_elements)),
                                 dtype=np.float32)
 
-        # f = os.path.join(save_dir, 'flux_array.pickle')
-        # p = open(f, 'wb')
-        # pickle.dump(flux_array, p, -1)
-        # p.close()
-
-        # f = os.path.join(save_dir, 'flux_array.pickle')
-        # p = open(f, 'rb')
-        # flux_array = pickle.load(p)
-        # p.close()
 
 
         # Can't draw from normal distribution with sigma = 0.0
@@ -4744,6 +4801,8 @@ def fit_line(wav,
     wav_array_norebin = np.repeat(wav_norebin.reshape(1, n_elements_norebin), n_samples, axis=0) 
     err_array_norebin = np.repeat(err_norebin.reshape(1, n_elements_norebin), n_samples, axis=0) 
     vdat_array_norebin = wave2doppler(wav_array_norebin, w0)
+
+
 
     # don't do any of the outlier masking etc. to this array. 
 
@@ -5114,7 +5173,7 @@ def fit_line(wav,
                             'data':yi,
                             'sigma':dyi},
                        method=fitting_method,
-                       options={'maxiter':1e6, 'maxfev':1e6} 
+                       options={'maxiter':1e4, 'maxfev':1e4} 
                        ) 
 
         
@@ -5580,11 +5639,11 @@ def fit_line(wav,
 
 if __name__ == '__main__':
 
-    s = np.genfromtxt('/data/vault/phewett/LiamC/qso_hw10_template.dat')
-    wav = s[:, 0]
-    flux = s[:, 1]
-    dw = np.diff(wav)
-    err = np.repeat(0.01, len(flux))
+    # s = np.genfromtxt('/data/vault/phewett/LiamC/qso_hw10_template.dat')
+    # wav = s[:, 0]
+    # flux = s[:, 1]
+    # dw = np.diff(wav)
+    # err = np.repeat(0.01, len(flux))
 
 
     out = fit_line(wav,
@@ -5608,7 +5667,7 @@ if __name__ == '__main__':
                    bkgd_median=False,
                    fitting_method='nelder',
                    mask_negflux=False,
-                   fit_model='Hb',
+                   fit_model='OIII',
                    subtract_fe=True,
                    fe_FWHM = 4000.0*(u.km/u.s),
                    fe_FWHM_vary = True,
@@ -5619,7 +5678,7 @@ if __name__ == '__main__':
                    reject_width = 21,
                    reject_sigma = 3.0,
                    n_samples = 1,
-                   emission_line='Hb',
+                   emission_line='OIII',
                    parallel = False,
                    cores = 8,
                    fix_broad_peaks=True,
