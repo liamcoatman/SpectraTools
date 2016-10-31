@@ -205,7 +205,7 @@ def gausshermite_6(x,
     return h0 + h1 + h2 + h3 + h4 + h5 + h6 
 
 
-def rebin(wa, fl, er, n):
+def rebin_simple(wa, fl, er, n):
     
     """ 
     Bins up the spectrum by averaging the values of every n pixels. 
@@ -230,6 +230,175 @@ def rebin(wa, fl, er, n):
     er = 1.0 / np.sqrt(np.nansum(1 / er**2, axis=1) ) 
     
     return wa, fl, er 
+
+def find_wa_edges(wa):
+
+    """ Given wavelength bin centres, find the edges of wavelengh
+    bins.
+
+    Examples
+    --------
+
+    >>> print find_wa_edges([1, 2.1, 3.3, 4.6])
+    [ 0.45  1.55  2.7   3.95  5.25]
+    
+    """
+    wa = np.asarray(wa)
+    edges = wa[:-1] + 0.5 * (wa[1:] - wa[:-1])
+    edges = [2*wa[0] - edges[0]] + edges.tolist() + [2*wa[-1] - edges[-1]]
+
+    return np.array(edges)
+
+
+def rebin(wa0, fl0, er0, wa1, weighted=False):
+
+    """ Rebins spectrum to a new wavelength scale generated using the
+    keyword parameters.
+
+    Returns the rebinned spectrum.
+
+    Will probably get the flux and errors for the first and last pixel
+    of the rebinned spectrum wrong.
+
+    General pointers about rebinning if you care about errors in the
+    rebinned values:
+
+    1. Don't rebin to a smaller bin size.
+    2. Be aware when you rebin you introduce correlations between
+       neighbouring points and between their errors.
+    3. Rebin as few times as possible.
+
+    """
+
+    # Note: 0 suffix indicates the old spectrum, 1 the rebinned spectrum.
+
+    fl1 = np.zeros(len(wa1))
+    er1 = np.zeros(len(wa1))
+ 
+    # find pixel edges, used when rebinning
+    edges0 = find_wa_edges(wa0)
+    edges1 = find_wa_edges(wa1)
+
+    widths0 = edges0[1:] - edges0[:-1]
+
+    npts0 = len(wa0)
+    npts1 = len(wa1)
+
+    df = 0.
+    de2 = 0.
+    npix = 0    # number of old pixels contributing to rebinned pixel,
+    
+    j = 0                # index of rebinned array
+    i = 0                # index of old array
+
+    # sanity check
+    if edges0[-1] < edges1[0] or edges1[-1] < edges0[0]:
+        raise ValueError('Wavelength scales do not overlap!')
+    
+    # find the first contributing old pixel to the rebinned spectrum
+    if edges0[i+1] < edges1[0]:
+        # Old wa scale extends lower than the rebinned scale. Find the
+        # first old pixel that overlaps with rebinned scale.
+        while edges0[i+1] < edges1[0]:
+            i += 1
+        i -= 1
+    elif edges0[0] > edges1[j+1]:
+        # New rebinned wa scale extends lower than the old scale. Find
+        # the first rebinned pixel that overlaps with the old spectrum
+        while edges0[0] > edges1[j+1]:
+            fl1[j] = np.nan
+            er1[j] = np.nan
+            j += 1
+        j -= 1
+
+    lo0 = edges0[i]      # low edge of contr. (sub-)pixel in old scale
+    
+    while True:
+    
+        hi0 = edges0[i+1]  # upper edge of contr. (sub-)pixel in old scale
+        hi1 = edges1[j+1]  # upper edge of jth pixel in rebinned scale
+
+        if hi0 < hi1:
+
+            if er0[i] > 0:
+
+                dpix = (hi0 - lo0) / widths0[i]
+                
+                if weighted:
+
+                    # https://en.wikipedia.org/wiki/Inverse-variance_weighting
+
+                    df += (fl0[i] / er0[i]**2) * dpix
+                    de2 += dpix / er0[i]**2
+                    npix += dpix / er0[i]**2
+                
+                else:
+
+                    df += fl0[i] * dpix
+                    de2 += er0[i]**2 * dpix
+                    npix += dpix 
+
+      
+            lo0 = hi0
+            i += 1
+          
+            if i == npts0:  break
+        
+        else:
+
+            # We have all old pixel flux values that contribute to the
+            # new pixel; append the new flux value and move to the
+            # next new pixel.
+            
+            if er0[i] > 0:
+
+                dpix = (hi1 - lo0) / widths0[i]
+
+                if weighted:
+           
+                    df += (fl0[i] / er0[i]**2) * dpix
+                    de2 += dpix / er0[i]**2
+                    npix += dpix / er0[i]**2
+    
+                else:
+
+                    df += fl0[i] * dpix
+                    de2 += er0[i]**2 * dpix
+                    npix += dpix 
+
+
+            if npix > 0:
+                
+                # find total flux and error, then divide by number of
+                # pixels (i.e. conserve flux density).
+                
+                fl1[j] = df / npix
+               
+                if weighted:
+
+                    # Not 100% sure this is correct 
+                    er1[j] = np.sqrt(1.0 / npix) 
+
+                else:
+                    # sum in quadrature and then divide by npix
+                    # simply following the rules of propagation
+                    # of uncertainty             
+                    er1[j] = np.sqrt(de2) / npix  
+            
+            else:
+
+                fl1[j] = np.nan
+                er1[j] = np.nan
+            
+            df = 0.
+            de2 = 0.
+            npix = 0.
+            lo0 = hi1
+            j += 1
+            
+            if j == npts1:  break
+        
+    return wa1, fl1, er1  
 
 # Simple mouse click function to store coordinates
 def onclick(event):
@@ -320,8 +489,8 @@ def resid(params=None,
     mod = model.eval(params=params, x=x, **kwargs)
 
     if data is not None:
-        resids = mod - data    
-
+        resids = mod - data  
+        
         if sigma is not None:
             weighted = np.sqrt(resids ** 2 / sigma ** 2) 
             return weighted
@@ -876,7 +1045,36 @@ def plot_fit(wav=None,
                  mod_broad_ha.eval(pars_broad_ha, x=np.sort(vdat.value)),
                  c='black',
                  linestyle='--',
-                 lw=2)     
+                 lw=2)   
+
+
+
+        #--------------------------------------------------------
+        
+        mod_ha = GaussianModel(prefix='ha_n_')
+
+        for i in range(nGaussians):
+            mod_ha += GaussianModel(prefix='ha_b_{}_'.format(i))  
+
+        pars_ha = mod_ha.make_params()
+
+        pars_ha['ha_n_center'].value = pars['ha_n_center'].value
+        pars_ha['ha_n_sigma'].value = pars['ha_n_sigma'].value
+        pars_ha['ha_n_amplitude'].value = pars['ha_n_amplitude'].value   
+
+        for key, value in pars.valuesdict().iteritems():
+            if key.startswith('ha_b_'):
+                pars_ha[key].value = value   
+
+        fit.plot(np.sort(vdat.value), 
+                 mod_ha.eval(pars_ha, x=np.sort(vdat.value)),
+                 c='blue',
+                 linestyle='--',
+                 lw=2)          
+
+
+
+
 
     if fit_model == 'siiv': 
 
@@ -1744,7 +1942,8 @@ def fit1(obj,
          verbose, 
          mono_lum_wav, 
          spec_norm, 
-         z):
+         z,
+         save_dir):
 
 
     k = obj[0]
@@ -1806,6 +2005,23 @@ def fit1(obj,
 
     if n_samples > 1: 
         print plot_title, k, out.nfev
+
+    if save_dir is not None:
+
+        """
+        Pickle background+continuum model (not in real flux units) 
+        """
+
+        # remove expressions from Parameters instance - https://groups.google.com/forum/#!topic/lmfit-py/6tCcTNe307I
+        params_dump = deepcopy(out.params)
+        for v in params_dump:
+            params_dump[v].expr = None
+            
+        param_file = os.path.join(save_dir, 'my_params_bkgd.txt')
+        parfile = open(param_file, 'w')
+        params_dump.dump(parfile)
+        parfile.close()
+
 
     return (flux_array_fit_k, flux_array_plot_k, mono_lum, eqw_fe, out.params)
 
@@ -2682,8 +2898,15 @@ def make_model_oiii(xscale=1.0,
     pars['oiii_5007_n_center'].min = wave2doppler(5008.239*u.AA, w0).value - 3000.0
     pars['oiii_5007_n_center'].max = wave2doppler(5008.239*u.AA, w0).value + 3000.0
     
+    altfit = True 
+
     if hb_narrow is True: 
-        pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
+
+        if altfit:
+            pars['hb_n_center'].min = -1000.0
+            pars['hb_n_center'].max = 1000.0
+        else:
+            pars['hb_n_center'].set(expr = 'oiii_5007_n_center-{}'.format(wave2doppler(5008.239*u.AA, w0).value)) 
     
     pars['oiii_4959_n_center'].set(expr = 'oiii_5007_n_center+{}'.format(wave2doppler(4960.295*u.AA, w0).value - wave2doppler(5008.239*u.AA, w0).value))
 
@@ -2720,7 +2943,11 @@ def make_model_oiii(xscale=1.0,
     pars['oiii_4959_n_sigma'].set(expr='oiii_5007_n_sigma')
 
     if hb_narrow is True: 
-        pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
+        if altfit:
+            pars['hb_n_sigma'].min = 100.0 / 2.35 
+            pars['hb_n_sigma'].max = 2000.0 / 2.35 
+        else:
+            pars['hb_n_sigma'].set(expr='oiii_5007_n_sigma')
 
     # make sure broad component of oiii is broader than narrow component 
     # pars.add('oiii_5007_b_sigma_delta')
@@ -2753,7 +2980,8 @@ def make_model_oiii(xscale=1.0,
         pars['oiii_5007_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
         pars['oiii_4959_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
         pars['oiii_4959_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
-        if hb_narrow is True:
+        
+        if hb_narrow is True and altfit is not True:
             pars['hb_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
         
         pars.add('oiii_scale') 
@@ -2764,7 +2992,7 @@ def make_model_oiii(xscale=1.0,
         pars['oiii_5007_b_amplitude'].set(value=236.18, vary=False, expr='oiii_scale*236.18', min=None, max=None)
         pars['oiii_4959_n_amplitude'].set(value=77.74, vary=False, expr='oiii_scale*77.74', min=None, max=None)
         pars['oiii_4959_b_amplitude'].set(value=78.72, vary=False, expr='oiii_scale*78.72', min=None, max=None)
-        if hb_narrow is True:
+        if hb_narrow is True and altfit is not True:
             pars['hb_n_amplitude'].set(value=53.24, vary=False, expr='oiii_scale*53.24', min=None, max=None)
 
  
@@ -2784,7 +3012,7 @@ def make_model_oiii(xscale=1.0,
 
         pars['oiii_5007_n_center'].set(value=wave2doppler(5008.239*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_5007_center_fixed+oiii_n_center_delta')
         pars['oiii_4959_n_center'].set(value=wave2doppler(4960.295*u.AA, w0).value, vary=True, min=None, max=None, expr='oiii_4959_center_fixed+oiii_n_center_delta')
-        if hb_narrow is True:
+        if hb_narrow is True and altfit is not True:
             pars['hb_n_center'].set(value=0.0, vary=True, min=None, max=None, expr='oiii_n_center_delta')
 
         pars.add('oiii_5007_b_center_delta') 
@@ -2968,6 +3196,7 @@ def get_broad_stats(vl,
     return (fwhm, sd, md, eqw, peak_flux, func_center, broad_lum)
 
 def get_stats_oiii(out,
+                   mod=None,
                    xscale=1.0, 
                    w0=4862.721*u.AA,
                    plot_title='',
@@ -2980,7 +3209,8 @@ def get_stats_oiii(out,
                    varray=None,
                    farray=None,
                    sarray=None,
-                   nGaussians=1):
+                   nGaussians=1,
+                   oiii_broad_off=False):
 
     mod_oiii_5007 = GaussianModel(prefix='oiii_5007_b_') + GaussianModel(prefix='oiii_5007_n_') 
     mod_oiii_5007_pars = mod_oiii_5007.make_params() 
@@ -2994,6 +3224,8 @@ def get_stats_oiii(out,
     mod_oiii_5007_pars['oiii_5007_n_center'].value = out.params['oiii_5007_n_center'].value
 
     integrand = lambda x: mod_oiii_5007.eval(params=mod_oiii_5007_pars, x=np.array(x) + wave2doppler(5008.239*u.AA, w0).value) 
+
+    
 
     dv = 1.0 
     xs = np.arange(-10000.0, 10000.0, dv) / xscale 
@@ -3037,10 +3269,46 @@ def get_stats_oiii(out,
     farray_oiii = farray[vmin_oiii: vmax_oiii]
     sarray_oiii = sarray[vmin_oiii: vmax_oiii]
 
-    f = interp1d(xs*xscale, integrand(xs))
-    
-    # We use the model flux rather than the data to calculate the signal-to-noise
-    snr_oiii = np.median(f(varray_oiii) / sarray_oiii)
+    # snr_oiii = np.median(integrand(varray_oiii/xscale) / sarray_oiii)
+
+    #------------------------------------------------------------------------
+
+    """Alternative calculation of S/N in OIII """
+
+
+    try: 
+        signal_oiii = np.max(integrand(varray_oiii/xscale))
+
+        # rebin noise to 200 km/s - minimum in our sample 
+
+        if varray_oiii.max() - varray_oiii.min() > 200.0: 
+        
+            varray_oiii_rebin, farray_oiii_rebin, sarray_oiii_rebin = rebin(varray_oiii, 
+                                                                            farray_oiii, 
+                                                                            sarray_oiii,
+                                                                            np.arange(varray_oiii.min(),
+                                                                                      varray_oiii.max(),
+                                                                                      200.0),
+                                                                            weighted=True)
+
+        else:
+
+            # Unanable to do binning 
+            varray_oiii_rebin = varray_oiii
+            farray_oiii_rebin = farray_oiii
+
+        # subtract signal (from all components) and calculate noise  
+        integrand_full =  lambda x: mod.eval(params=out.params, x=np.array(x) + wave2doppler(5008.239*u.AA, w0).value) 
+
+        noise_oiii = np.nanstd(farray_oiii_rebin - integrand_full(varray_oiii_rebin/xscale)) 
+
+        snr_oiii = signal_oiii / noise_oiii
+
+    except ValueError as e:
+        snr_oiii = np.nan 
+
+    if np.isinf(snr_oiii):
+        snr_oiii = np.nan
 
     #------------------------------------------------------------------------
 
@@ -3071,17 +3339,57 @@ def get_stats_oiii(out,
     varray_hb = varray[vmin_hb: vmax_hb]
     farray_hb = farray[vmin_hb: vmax_hb]
     sarray_hb = sarray[vmin_hb: vmax_hb]
-
-    f_hb = interp1d(xs*xscale, integrand_hb(xs))
     
     # We use the model flux rather than the data to calculate the signal-to-noise
-    snr_hb = np.median(f_hb(varray_hb) / sarray_hb)
+    # snr_hb = np.median(integrand_hb(varray_hb/xscale) / sarray_hb)
+
 
     #------------------------------------------------------------------------
+
+    """Alternative calculation of S/N in Hb"""
+
+    try: 
+        signal_hb = np.max(integrand_hb(varray_hb/xscale))
+
+        # rebin noise to 200 km/s - minimum in our sample 
+
+        if varray_hb.max() - varray_hb.min() > 200.0: 
+        
+            varray_hb_rebin, farray_hb_rebin, sarray_hb_rebin = rebin(varray_hb, 
+                                                                      farray_hb, 
+                                                                      sarray_hb,
+                                                                      np.arange(varray_hb.min(),
+                                                                                varray_hb.max(),
+                                                                                200.0),
+                                                                      weighted=True)
+
+        else:
+
+            # Unanable to do binning 
+            varray_hb_rebin = varray_hb
+            farray_hb_rebin = farray_hb
+
+        # subtract signal (from all components) and calculate noise  
+        integrand_full =  lambda x: mod.eval(params=out.params, x=np.array(x)) 
+
+        noise_hb = np.nanstd(farray_hb_rebin - integrand_full(varray_hb_rebin/xscale)) 
+
+        snr_hb = signal_hb / noise_hb
+
+    except ValueError as e:
+        snr_hb = np.nan 
+
+    if np.isinf(snr_hb):
+        snr_hb = np.nan
+
+    #------------------------------------------------------------------------
+
 
     # FWHM. Not really well defined if double-peaked. 
     # In this case need to use Peterson et al. (2004) perscription
     fwhm = get_fwhm(xs*xscale, integrand(xs)) 
+
+    #------------------------------------------------------------------------
 
     # Get centroid of narrower broad hb gaussian to use for redshift
     # almost always doesn't matter if use broader one, since peaks 
@@ -3100,6 +3408,44 @@ def get_stats_oiii(out,
     hb_centroids = np.atleast_1d(hb_centroids)
     hb_fwhms = np.atleast_1d(hb_fwhms)
 
+    #------------------------------------------------------------------------
+
+    """z from peak of Hb profile
+       almost always the same as the peak
+       of the narrower component"""
+
+
+    hb_peak = xs[np.argmax(integrand_hb(xs))]*xscale
+    whb = doppler2wave(hb_peak*(u.km/u.s), w0)
+    whb = whb * (1.0 + z) 
+    hb_z = (whb / w0) - 1.0    
+
+
+    #------------------------------------------------------------------------
+
+    
+    # Get centroid of narrower OIII component 
+    if oiii_broad_off is True:
+        oiii_5007_n_cen = out.params['oiii_5007_n_center'].value 
+    else:
+        if out.params['oiii_5007_n_sigma'].value < out.params['oiii_5007_b_sigma'].value:
+            oiii_5007_n_cen = out.params['oiii_5007_n_center'].value 
+        else:
+            oiii_5007_n_cen = out.params['oiii_5007_b_center'].value 
+
+    woiii = doppler2wave(oiii_5007_n_cen*(u.km/u.s), w0)
+    woiii = woiii * (1.0 + z) 
+    oiii_narrow_z = (woiii / (5008.239*u.AA)) - 1.0
+
+    # Following Shen (2016), calculate redshift from peak of whole OIII profile
+
+    oiii_peak = xs[np.argmax(integrand(xs))] * xscale
+    woiii = doppler2wave(oiii_peak*(u.km/u.s) + wave2doppler(5008.239*u.AA, w0), w0)
+    woiii = woiii * (1.0 + z) 
+    oiii_full_peak_z = (woiii / (5008.239*u.AA)) - 1.0    
+
+    #------------------------------------------------------------------------
+    
     fit_out = {'name':plot_title,
                'oiii_5007_v5':xs[np.argmin(np.abs(cdf - 0.05))],
                'oiii_5007_v10':xs[np.argmin(np.abs(cdf - 0.1))],
@@ -3113,8 +3459,11 @@ def get_stats_oiii(out,
                'oiii_5007_snr':snr_oiii,
                'oiii_5007_fwhm':fwhm,
                'oiii_peak_ratio':out.params['oiii_peak_ratio'].value, 
+               'oiii_5007_narrow_z':oiii_narrow_z,
+               'oiii_5007_full_peak_z':oiii_full_peak_z,
                'hb_centroid':hb_centroids[np.argmin(hb_fwhms)],
                'hb_snr':snr_hb, 
+               'hb_z':hb_z,
                'redchi':out.redchi}
 
     return fit_out 
@@ -3122,7 +3471,7 @@ def get_stats_oiii(out,
 def get_stats_hb(out=None, 
                  line_region=[-10000.0, 10000.0]*(u.km/u.s), 
                  xscale=1.0,
-                 w0=np.mean([1548.202,1550.774])*u.AA,
+                 w0=4862.721*u.AA,
                  bkgdmod=None,
                  bkgdpars_k=None,
                  sp_fe=None,
@@ -3357,7 +3706,7 @@ def get_stats_hb(out=None,
 def get_stats_ha(out=None, 
                  line_region=[-10000.0, 10000.0]*(u.km/u.s), 
                  xscale=1.0,
-                 w0=np.mean([1548.202,1550.774])*u.AA,
+                 w0=6564.89*u.AA,
                  bkgdmod=None,
                  bkgdpars_k=None,
                  sp_fe=None,
@@ -3367,6 +3716,9 @@ def get_stats_ha(out=None,
                  mod=None,
                  nGaussians=1,
                  plot_title='',
+                 varray=None,
+                 farray=None,
+                 sarray=None,
                  emission_line='Ha'):
 
     """
@@ -3468,6 +3820,54 @@ def get_stats_ha(out=None,
     narrow_fwhm = out.params['ha_n_fwhm'].value 
     narrow_voff = out.params['ha_n_center'].value 
      
+    #------------------------------------------------------------------------
+
+    """Calculate redshift from peak/median of broad+narrow components"""
+
+    mod_ha = GaussianModel(prefix='ha_n_')
+
+    for i in range(nGaussians):
+        mod_ha += GaussianModel(prefix='ha_b_{}_'.format(i))  
+    
+    pars_ha = mod_ha.make_params()
+
+    for key, value in out.params.valuesdict().iteritems():
+        if key.startswith('ha_'):
+            pars_ha[key].value = value 
+
+    integrand_ha = lambda x: mod_ha.eval(params=pars_ha, x=np.array(x))
+
+    peak = xs[np.argmax(integrand_ha(xs))]*xscale
+
+    w = doppler2wave(peak*(u.km/u.s), w0) * (1.0 + z)
+    peak_z = (w / w0) - 1.0    
+
+  
+    # Calculate S/N of within w90 
+
+    norm_ha = np.sum(integrand_ha(xs) * dv)
+    pdf_ha = integrand_ha(xs) / norm_ha
+    cdf_ha = np.cumsum(pdf_ha)
+
+    vmin_ha = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf_ha - 0.10))]))
+    vmax_ha = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf_ha - 0.90))]))
+    
+    varray_ha = varray[vmin_ha: vmax_ha]
+    farray_ha = farray[vmin_ha: vmax_ha]
+    sarray_ha = sarray[vmin_ha: vmax_ha]
+
+    f_ha = interp1d(xs*xscale, integrand_ha(xs))
+    
+    # We use the model flux rather than the data to calculate the signal-to-noise
+    snr_ha = np.median(f_ha(varray_ha) / sarray_ha)
+
+    #------------------------------------------------------------------------
+    # Velocity offset of broad component relative to narrow component  
+    # Already been sorted above
+
+    broad_offset = broad_cens[0] - broad_cens[1]
+
+    #------------------------------------------------------------------------
 
     fit_out = {'name':plot_title, 
                'fwhm':fwhm,
@@ -3486,7 +3886,10 @@ def get_stats_ha(out=None,
                'very_broad_frac':very_broad_frac,
                'narrow_fwhm':narrow_fwhm,
                'narrow_lum':np.log10(narrow_lum.value) if ~np.isnan(narrow_lum.value) else np.nan,
-               'narrow_voff':narrow_voff}
+               'narrow_voff':narrow_voff,
+               'peak_z':peak_z,
+               'broad_offset':broad_offset,
+               'snr_line':snr_ha}
 
     if emission_line == 'Hb':
 
@@ -3565,6 +3968,9 @@ def get_stats_multigauss(out=None,
                          mod=None,
                          nGaussians=1,
                          plot_title='',
+                         varray=None,
+                         farray=None,
+                         sarray=None,
                          emission_line='Ha'):
 
     integrand = lambda x: mod.eval(params=out.params, x=np.array(x))
@@ -3627,6 +4033,35 @@ def get_stats_multigauss(out=None,
 
         very_broad_frac = np.sum(very_broad_integrand) / (np.sum(quite_broad_integrand) + np.sum(very_broad_integrand))
 
+    # get redshift from peak of full profile 
+    w = doppler2wave(func_center*(u.km/u.s), w0) * (1.0 + z)
+    peak_z = (w / w0) - 1.0    
+
+
+    # Calculate S/N of within w90 -------------------------------------- 
+
+    norm = np.sum(integrand(xs) * dv)
+    pdf = integrand(xs) / norm
+    cdf = np.cumsum(pdf)
+
+    vmin = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf - 0.10))]))
+    vmax = np.argmin(np.abs(varray - xs[np.argmin(np.abs(cdf - 0.90))]))
+    
+    f = interp1d(xs*xscale, integrand(xs))
+    
+    # We use the model flux rather than the data to calculate the signal-to-noise
+    snr_line = np.median(f(varray[vmin: vmax]) / sarray[vmin: vmax])
+
+
+   #------------------------------------------------------------------------
+    # Velocity offset of broad component relative to narrow component  
+    # Already been sorted above
+
+    broad_offset = broad_cens[0] - broad_cens[1]
+
+    #------------------------------------------------------------------------
+
+
     fit_out = {'name':plot_title, 
                'fwhm':fwhm,
                'fwhm_1':broad_fwhms[0],
@@ -3636,6 +4071,9 @@ def get_stats_multigauss(out=None,
                'cen': func_center,
                'cen_1':broad_cens[0],
                'cen_2':broad_cens[1],
+               'peak_z':peak_z,
+               'broad_offset':broad_offset,
+               'snr_line':snr_line,
                'eqw': eqw,
                'broad_lum':np.log10(broad_lum.value),
                'peak':peak_flux, 
@@ -3826,7 +4264,7 @@ def fit3(obj,
 
         mod, pars = make_model_multigauss(x,
                                           y,
-                                          nGaussians=2,
+                                          nGaussians=nGaussians,
                                           fix_broad_peaks=fix_broad_peaks)
                 
 
@@ -4023,6 +4461,7 @@ def fit3(obj,
     if fit_model == 'OIII':
 
         fit_out = get_stats_oiii(out,
+                                 mod=mod,
                                  xscale=xscale, 
                                  w0=w0,
                                  plot_title=plot_title,
@@ -4035,7 +4474,8 @@ def fit3(obj,
                                  varray=np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale),
                                  farray=ma.getdata(y[~ma.getmaskarray(y)]),
                                  sarray=ma.getdata(er[~ma.getmaskarray(er)]),
-                                 nGaussians=nGaussians)
+                                 nGaussians=nGaussians,
+                                 oiii_broad_off=oiii_broad_off)
 
 
     elif fit_model == 'Hb':
@@ -4070,6 +4510,9 @@ def fit3(obj,
                                sp_fe=sp_fe,
                                z=z,
                                mod=mod,
+                               varray=np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale),
+                               farray=ma.getdata(y[~ma.getmaskarray(y)]),
+                               sarray=ma.getdata(er[~ma.getmaskarray(er)]),
                                nGaussians=nGaussians,
                                plot_title=plot_title,
                                emission_line=emission_line)
@@ -4104,6 +4547,9 @@ def fit3(obj,
                                        spec_norm=spec_norm,
                                        z=z,
                                        mod=mod,
+                                       varray=np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value/xscale),
+                                       farray=ma.getdata(y[~ma.getmaskarray(y)]),
+                                       sarray=ma.getdata(er[~ma.getmaskarray(er)]),
                                        nGaussians=nGaussians,
                                        plot_title=plot_title,
                                        emission_line=emission_line)
@@ -4128,26 +4574,27 @@ def fit3(obj,
                 """
                 Nicely print out important fitting info
                 """     
-    
-                if out.params['ha_n_sigma'].vary is True:
-                    print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(out.params['ha_n_sigma'].value * 2.35, 
-                                                                                                                      out.params['ha_n_sigma'].init_value * 2.35, 
-                                                                                                                      out.params['ha_n_sigma'].vary, 
-                                                                                                                      out.params['ha_n_sigma'].min * 2.35, 
-                                                                                                                      out.params['ha_n_sigma'].max * 2.35) 
-                else:
-                    print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(out.params['ha_n_sigma'].value * 2.35, 
-                                                                     out.params['ha_n_sigma'].vary) 
                 
-                if out.params['ha_n_center'].vary is True:
-                    print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(out.params['ha_n_center'].value, 
-                                                                                                                        out.params['ha_n_center'].init_value, 
-                                                                                                                        out.params['ha_n_center'].vary, 
-                                                                                                                        out.params['ha_n_center'].min, 
-                                                                                                                        out.params['ha_n_center'].max) 
-                else:
-                    print 'Narrow Center = {0:.1f}, Vary = {1}'.format(out.params['ha_n_center'].value, 
-                                                                       out.params['ha_n_center'].vary) 
+                if fit_model == 'Ha':
+                    if out.params['ha_n_sigma'].vary is True:
+                        print 'Narrow FWHM = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(out.params['ha_n_sigma'].value * 2.35, 
+                                                                                                                          out.params['ha_n_sigma'].init_value * 2.35, 
+                                                                                                                          out.params['ha_n_sigma'].vary, 
+                                                                                                                          out.params['ha_n_sigma'].min * 2.35, 
+                                                                                                                          out.params['ha_n_sigma'].max * 2.35) 
+                    else:
+                        print 'Narrow FWHM = {0:.1f}, Vary = {1}'.format(out.params['ha_n_sigma'].value * 2.35, 
+                                                                         out.params['ha_n_sigma'].vary) 
+                    
+                    if out.params['ha_n_center'].vary is True:
+                        print 'Narrow Center = {0:.1f}, Initial = {1:.1f}, Vary = {2}, Min = {3:.1f}, Max = {4:.1f}'.format(out.params['ha_n_center'].value, 
+                                                                                                                            out.params['ha_n_center'].init_value, 
+                                                                                                                            out.params['ha_n_center'].vary, 
+                                                                                                                            out.params['ha_n_center'].min, 
+                                                                                                                            out.params['ha_n_center'].max) 
+                    else:
+                        print 'Narrow Center = {0:.1f}, Vary = {1}'.format(out.params['ha_n_center'].value, 
+                                                                           out.params['ha_n_center'].vary) 
     
                 print fit_out['name'] + ',',\
                       format(fit_out['fwhm'], '.2f') + ',' if ~np.isnan(fit_out['fwhm']) else ',',\
@@ -4186,6 +4633,8 @@ def fit3(obj,
                        'dv: {0:.1f} km/s \n'.format(fit_out['dv'].value), \
                        'Monochomatic luminosity: {0:.2f} erg/s \n'.format(fit_out['monolum'])
     
+
+
             if emission_line == 'Hb':
     
                 if out.params['oiii_5007_n_sigma'].vary is True:
@@ -4489,6 +4938,7 @@ def fit_line(wav,
 
     """
 
+
     if n_samples > 1: 
 
         if save_dir is not None:
@@ -4510,6 +4960,8 @@ def fit_line(wav,
                            'narrow_fwhm', 
                            'narrow_lum', 
                            'narrow_voff', 
+                           'peak_z',
+                           'broad_offset',
                            'redchi', 
                            'snr', 
                            'monolum', 
@@ -4604,8 +5056,11 @@ def fit_line(wav,
                            'oiii_5007_snr',
                            'oiii_5007_fwhm',
                            'oiii_peak_ratio',
+                           'oiii_5007_narrow_z',
+                           'oiii_5007_full_peak_z',
                            'hb_centroid',
                            'hb_snr', 
+                           'hb_z',
                            'redchi']
                               
 
@@ -4644,7 +5099,7 @@ def fit_line(wav,
     flux_norebin = flux * 1.0
     err_norebin = err * 1.0 
 
-    wav, flux, err = rebin(wav, flux, err, n_rebin)
+    wav, flux, err = rebin_simple(wav, flux, err, n_rebin)
 
     n_elements = len(wav)
     n_elements_norebin = len(wav_norebin)
@@ -4693,8 +5148,11 @@ def fit_line(wav,
                            'oiii_5007_snr':np.nan,
                            'oiii_5007_fwhm':np.nan,
                            'oiii_peak_ratio':np.nan,
+                           'oiii_5007_narrow_z':np.nan,
+                           'oiii_5007_full_peak_z':np.nan,
                            'hb_centroid':np.nan,
                            'hb_snr':np.nan,
+                           'hb_z':np.nan,
                            'redchi':np.nan}
 
             else: 
@@ -4711,6 +5169,9 @@ def fit_line(wav,
                            'eqw':np.nan,
                            'broad_lum':np.nan,
                            'peak':np.nan, 
+                           'peak_z':np.nan, 
+                           'broad_offset':np.nan,
+                           'snr_line':np.nan,
                            'amplitude_1':np.nan,
                            'amplitude_2':np.nan,
                            'very_broad_frac':np.nan,
@@ -5029,6 +5490,7 @@ def fit_line(wav,
                            'narrow_fwhm':np.nan,
                            'narrow_lum':np.nan,
                            'narrow_voff':np.nan, 
+                           'peak_z':np.nan,
                            'oiii_5007_eqw':np.nan,
                            'oiii_5007_lum':np.nan,
                            'oiii_5007_n_lum':np.nan,
@@ -5085,20 +5547,31 @@ def fit_line(wav,
         """
         Calculate S/N ratio per pixel 
         Do this for the un-rebinned spectra  
+        Not perfect - there's also iron in the continuum windows
         """
        
-        wa = ma.concatenate((wav_array_blue_norebin, wav_array_red_norebin), axis=1)
-        fl = ma.concatenate((flux_array_blue_norebin, flux_array_red_norebin), axis=1)
-        er = ma.concatenate((err_array_blue_norebin, err_array_red_norebin), axis=1)
-    
-        mask = (er < 0.0) | np.isnan(fl)
+       
+        mask = (err_array_blue_norebin < 0.0) | np.isnan(flux_array_blue_norebin)
         
-        fl = ma.masked_where(mask, fl)
-        er = ma.masked_where(mask, er)
-        wa = ma.masked_where(mask, wa)
+        wa = ma.masked_where(mask, wav_array_blue_norebin)
+        fl = ma.masked_where(mask, flux_array_blue_norebin)
+        er = ma.masked_where(mask, err_array_blue_norebin)
         
-        snr = ma.median(fl / er, axis=1)
-    
+        snr_blue = ma.median(fl, axis=1) / ma.std(fl, axis=1)
+        
+        mask = (err_array_red_norebin < 0.0) | np.isnan(flux_array_red_norebin)
+        
+        wa = ma.masked_where(mask, wav_array_red_norebin)
+        fl = ma.masked_where(mask, flux_array_red_norebin)
+        er = ma.masked_where(mask, err_array_red_norebin)
+        
+        snr_red = ma.median(fl, axis=1) / ma.std(fl, axis=1)
+
+        snr = np.mean([snr_blue, snr_red], axis=0)
+      
+        # snr = ma.median(fl / er, axis=1)
+
+
         # 33.02 is the A per resolution element I measured from the Arc spectrum for Liris 
         if verbose:
             if n_samples == 1:
@@ -5342,7 +5815,8 @@ def fit_line(wav,
                              verbose = verbose, 
                              mono_lum_wav = mono_lum_wav, 
                              spec_norm = spec_norm, 
-                             z = z)
+                             z = z,
+                             save_dir=save_dir)
     
             mono_lum, eqw_fe = np.zeros(n_samples), np.zeros(n_samples) 
             bkgdpars = []
@@ -5645,6 +6119,15 @@ if __name__ == '__main__':
     # dw = np.diff(wav)
     # err = np.repeat(0.01, len(flux))
 
+    # t = np.genfromtxt('/home/lc585/Dropbox/IoA/nirspec/tables/shen2016_table2.txt') 
+    
+    t = np.genfromtxt('/home/lc585/Dropbox/IoA/nirspec/tables/hb_absorption_composite.dat', delimiter=',') 
+
+    wav = t[:, 0]
+    flux = t[:, 1]
+    err = t[:, 2]
+    dw = np.diff(wav)
+
 
     out = fit_line(wav,
                    dw,
@@ -5661,18 +6144,18 @@ if __name__ == '__main__':
                    maskout=None,
                    verbose=True,
                    plot=True,
-                   save_dir='/data/lc585/nearIR_spectra/linefits/SDSSComposite',
-                   plot_title='SDSSComposite',
+                   save_dir='/data/lc585/nearIR_spectra/linefits/Asymmetric_Hb_Comp',
+                   plot_title='Composite',
                    plot_savefig='figure.png',
                    bkgd_median=False,
-                   fitting_method='nelder',
+                   fitting_method='powell',
                    mask_negflux=False,
                    fit_model='OIII',
                    subtract_fe=True,
                    fe_FWHM = 4000.0*(u.km/u.s),
                    fe_FWHM_vary = True,
                    mono_lum_wav = 5100 * u.AA,
-                   hb_narrow = True,  
+                   hb_narrow = False,  
                    n_rebin = 1 ,
                    reject_outliers = False, 
                    reject_width = 21,
@@ -5682,4 +6165,4 @@ if __name__ == '__main__':
                    parallel = False,
                    cores = 8,
                    fix_broad_peaks=True,
-                   oiii_broad_off=False)
+                   oiii_broad_off=True)
