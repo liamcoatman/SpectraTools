@@ -12,7 +12,7 @@ from __future__ import division
 from termcolor import colored
 import numpy as np
 import astropy.units as u
-from lmfit.models import GaussianModel, LorentzianModel, PowerLawModel, ConstantModel
+from lmfit.models import GaussianModel, LorentzianModel, PowerLawModel, ConstantModel, LinearModel
 from lmfit import minimize, Parameters, fit_report, Model, Minimizer
 import numpy.ma as ma
 import matplotlib.pyplot as plt
@@ -39,6 +39,7 @@ from multiprocessing import Pool
 from copy import deepcopy
 import warnings
 import matplotlib
+import palettable 
 warnings.simplefilter(action = "ignore", category = FutureWarning) # I get "elementwise comparison failed" during plotting, but doesn't seem important
 # warnings.simplefilter(action = "error", category = RuntimeWarning)
 np.set_printoptions(threshold='nan')
@@ -549,6 +550,242 @@ def PLModel(x, amplitude, exponent):
     amp = amplitude * 5000.0**(-exponent) 
 
     return amp*x**exponent 
+
+def oiii_reconstruction(out, ax=None):
+
+    """
+    Reconstruct just OIII emission from ICA components
+    """
+
+    cs = palettable.colorbrewer.diverging.RdBu_7.mpl_colors 
+    
+
+    comps_wav, comps, w = make_model_mfica(mfica_n_weights=10,
+                                           mfica_shift_vary=False)
+    
+    w['w1'].value = 0.0 
+    w['w2'].value = 0.0
+    w['w3'].value = 0.0
+    w['w4'].value = out.params['w4'].value 
+    w['w5'].value = out.params['w5'].value 
+    w['w6'].value = out.params['w6'].value 
+    w['w7'].value = out.params['w7'].value 
+    w['w8'].value = out.params['w8'].value 
+    w['w9'].value = out.params['w9'].value 
+    w['w10'].value = out.params['w10'].value 
+    w['shift'].value = out.params['shift'].value 
+
+    flux = mfica_model(w, comps, comps_wav, comps_wav)
+
+    """
+    We use the blue wing of the 4960 peak to reconstruct the 
+    5008 peak
+    """
+
+    peak_diff = 5008.239 - 4960.295
+
+    # just made up these boundaries
+    inds1 = (comps_wav > 4900.0) & (comps_wav < 4980 - peak_diff)
+    inds2 = (comps_wav > 4980.0) & (comps_wav < 5050.0)
+
+    wav_5008 = np.concatenate((comps_wav[inds1] + peak_diff, comps_wav[inds2]))
+    flux_5008 = np.concatenate((flux[inds1], flux[inds2]))
+
+    """
+    Fit linear model and subtract background
+    """
+
+    xfit = np.concatenate((wav_5008[:10], wav_5008[-10:]))
+    yfit = np.concatenate((flux_5008[:10], flux_5008[-10:]))
+
+    mod = LinearModel()
+    out = mod.fit(yfit, x=xfit, slope=0.0, intercept=0.0)
+
+    flux_5008 = flux_5008 - mod.eval(params=out.params, x=wav_5008)
+
+    """
+    If flux is negative set to zero
+    """
+
+    flux_5008[flux_5008 < 0.0] = 0.0 
+
+
+    xs = np.arange(wav_5008.min(), wav_5008.max(), 0.01)
+    vs = wave2doppler(xs*u.AA, 5008.239*u.AA)
+
+    f = interp1d(wav_5008, flux_5008)
+
+    cdf = np.cumsum(f(xs) / np.sum(f(xs))) 
+
+    if ax is not None: 
+
+        ax.plot(comps_wav, flux, color='grey') 
+        ax.axhline(0.0, color='black', linestyle='--')
+        ax.set_xlim(4900, 5100)
+    
+        ax.plot(wav_5008, flux_5008, color='black', lw=2)
+         
+        ax.axvline(xs[np.argmin(np.abs(cdf - 0.05))], color=cs[0], linestyle='--') 
+        ax.axvline(xs[np.argmin(np.abs(cdf - 0.10))], color=cs[1], linestyle='--') 
+        ax.axvline(xs[np.argmin(np.abs(cdf - 0.25))], color=cs[2], linestyle='--') 
+        ax.axvline(xs[np.argmin(np.abs(cdf - 0.50))], color='grey', linestyle='--') 
+        ax.axvline(xs[np.argmin(np.abs(cdf - 0.75))], color=cs[4], linestyle='--') 
+        ax.axvline(xs[np.argmin(np.abs(cdf - 0.90))], color=cs[5], linestyle='--') 
+        ax.axvline(xs[np.argmin(np.abs(cdf - 0.95))], color=cs[6], linestyle='--') 
+
+        return None 
+
+    else:
+
+        return {'mfica_oiii_v05': vs[np.argmin(np.abs(cdf - 0.05))].value,
+                'mfica_oiii_v10': vs[np.argmin(np.abs(cdf - 0.1))].value,
+                'mfica_oiii_v25': vs[np.argmin(np.abs(cdf - 0.25))].value,
+                'mfica_oiii_v50': vs[np.argmin(np.abs(cdf - 0.50))].value,
+                'mfica_oiii_v75': vs[np.argmin(np.abs(cdf - 0.75))].value,
+                'mfica_oiii_v90': vs[np.argmin(np.abs(cdf - 0.90))].value,
+                'mfica_oiii_v95': vs[np.argmin(np.abs(cdf - 0.95))].value}
+
+          
+ 
+
+def plot_mfica_fit(mfica_n_weights=10,
+                   xi=None,
+                   yi=None,
+                   dyi=None,
+                   out=None,
+                   comps=None,
+                   comps_wav=None,
+                   plot_savefig=None,
+                   verbose=False,
+                   save_dir=None):
+    
+
+
+    fig, axs = plt.subplots(3, 1, figsize=(6, 12))
+    
+    plt.subplots_adjust(hspace=0.0) 
+    
+    # color = matplotlib.cm.get_cmap('Set1')
+    # color = color(np.linspace(0, 1, mfica_n_weights))
+    set1 = palettable.colorbrewer.qualitative.Set1_9.mpl_colors 
+    
+    xi_noreject = np.asarray(ma.getdata(xi[~ma.getmaskarray(xi)]).value)
+    yi_noreject = ma.getdata(yi[~ma.getmaskarray(yi)])
+    dyi_noreject = ma.getdata(dyi[~ma.getmaskarray(dyi)])
+
+    xs = np.arange(xi_noreject.min(), xi_noreject.max(), 1)
+
+    axs[0].plot(xs, 
+                mfica_model(out.params, 
+                            comps, 
+                            comps_wav, 
+                            xs), 
+                color=set1[0], 
+                zorder=3, 
+                lw=2)
+
+    axs[0].errorbar(xi_noreject, 
+                    yi_noreject, 
+                    yerr=dyi_noreject, 
+                    linestyle='', 
+                    color=set1[8], 
+                    alpha=0.2, 
+                    zorder=1)
+
+    axs[0].plot(xi_noreject, 
+                yi_noreject, 
+                marker='o', 
+                linestyle='', 
+                markerfacecolor='None', 
+                markeredgecolor='black', 
+                alpha=0.4, 
+                markersize=1, 
+                zorder=2)
+    
+    colors = [4, 1, 1, 2, 2, 2, 8, 8, 8, 8]
+
+    for i in range(1, mfica_n_weights+1):
+
+        axs[0].plot(xs, 
+                    mfica_get_comp(i, 
+                                   out.params, 
+                                   comps, 
+                                   comps_wav, 
+                                   xs), 
+                    c=set1[colors[i-1]])
+        
+
+    axs[0].axvline(5008.239, linestyle='--', c='red', zorder=0)
+    axs[0].axvline(4960.295, linestyle='--', c='red', zorder=0)
+    
+    axs[0].set_ylim(-0.1 * np.max(mfica_model(out.params, comps, comps_wav, xi_noreject)), 
+                    1.1 * np.max(mfica_model(out.params, comps, comps_wav, xi_noreject)))
+
+    axs[0].set_xlim(xi_noreject.min(), xi_noreject.max())
+
+    # plot rejected points   
+
+    xi_reject = np.array(xi[ma.getmaskarray(xi)])
+    yi_reject = np.array(yi[ma.getmaskarray(yi)])
+    dyi_reject = np.array(dyi[ma.getmaskarray(dyi)])
+
+
+    axs[0].errorbar(xi_reject, 
+                    yi_reject, 
+                    yerr=dyi_reject, 
+                    linestyle='', 
+                    color=set1[8], 
+                    alpha=0.2, 
+                    zorder=1)
+
+    axs[0].plot(xi_reject, 
+                yi_reject, 
+                marker='o', 
+                linestyle='', 
+                markerfacecolor='None', 
+                markeredgecolor=set1[0], 
+                alpha=0.4, 
+                markersize=1, 
+                zorder=2)
+    #---------------------------------------------------------------------------
+    
+    oiii_reconstruction(out, ax=axs[1])
+    
+
+    #---------------------------------------------------------------------------
+
+    axs[2].plot(xi_noreject, 
+                (yi_noreject - mfica_model(out.params, comps, comps_wav, xi_noreject)) / dyi_noreject, 
+                linestyle='', 
+                marker='o', 
+                markersize=3,
+                markerfacecolor=set1[8],
+                markeredgecolor='None')
+    
+    axs[2].set_ylim(-5, 5)
+    
+    axs[2].axhline(0.0, color='black', linestyle='--')
+
+    axs[0].set_yticks([])
+    axs[2].set_yticks([])
+    
+    fig.tight_layout()
+
+    if plot_savefig is not None:
+        fig.savefig(os.path.join(save_dir, plot_savefig))
+    
+
+    if verbose: 
+        global coords
+        coords = [] 
+        cid = fig.canvas.mpl_connect('button_press_event', onclick3)
+
+    if verbose:
+        plt.show(1)
+    
+    plt.close()
+
+    return None 
 
 def plot_spec(wav=None,
               flux=None,
@@ -1890,7 +2127,7 @@ def mfica_model(weights, comps, comps_wav, x):
 
     fl = weights['w1'].value * comps[:, 0]
 
-    for i in range(comps.shape[1] - 1):
+    for i in range(comps.shape[1]-1):
         fl += weights['w{}'.format(i+2)].value * comps[:, i+1] 
 
     f = interp1d(comps_wav + weights['shift'].value, 
@@ -1912,14 +2149,14 @@ def mfica_get_comp(i, weights, comps, comps_wav, x):
 
   
 def mfica_resid(weights=None, 
-                 comps=None,
-                 comps_wav=None,
-                 x=None, 
-                 data=None, 
-                 sigma=None):
+                comps=None,
+                comps_wav=None,
+                x=None, 
+                data=None, 
+                sigma=None):
 
     if data is not None:
-        
+
         resids = mfica_model(weights, comps, comps_wav, x) - data 
 
         if sigma is not None:
@@ -2343,6 +2580,185 @@ def fit2(obj,
 
     return (flux_array_fit_k, flux_array_plot_k, mono_lum, eqw_fe, out.params)
 
+def fit4(obj, 
+         n_samples, 
+         wav, 
+         flux, 
+         err, 
+         verbose, 
+         wav_array_blue, 
+         flux_array_blue, 
+         wav_array_red, 
+         flux_array_red, 
+         reject_outliers, 
+         w0, 
+         maskout, 
+         continuum_region,
+         show_continuum_fit): 
+
+    """
+    Fit power-law to background
+    """
+
+    k = obj[0]
+    x = obj[1]
+    y = obj[2]
+    er = obj[3]
+    flux_array_fit_k = obj[4]
+    err_array_fit_k = obj[5]
+    wav_array_fit_k = obj[6] 
+
+    bkgdmod = Model(PLModel, 
+                    param_names=['amplitude','exponent'], 
+                    independent_vars=['x']) 
+
+    bkgdpars = bkgdmod.make_params()    
+    bkgdpars['exponent'].value = 1.0
+    bkgdpars['amplitude'].value = 1.0 
+
+    out = minimize(resid,
+                   bkgdpars,
+                   kws={'x':ma.getdata(x[~ma.getmaskarray(x)]).value, 
+                        'model':bkgdmod, 
+                        'data':ma.getdata(y[~ma.getmaskarray(y)]),
+                        'sigma':ma.getdata(er[~ma.getmaskarray(er)])},  
+                   method='leastsq') 
+
+    # Need to do like this because operations do nothing to masked elements 
+    mask = ma.getmask(wav_array_fit_k)
+
+    wav_array_fit_k = ma.getdata(wav_array_fit_k)
+    flux_array_fit_k = ma.getdata(flux_array_fit_k)
+    err_array_fit_k = ma.getdata(err_array_fit_k)
+
+    # flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] = \
+    #     flux_array_fit_k[~ma.getmaskarray(wav_array_fit_k)] / \
+    #     resid(params=out.params, 
+    #           x=ma.getdata(wav_array_fit_k[~ma.getmaskarray(wav_array_fit_k)]).value, 
+    #           model=bkgdmod)
+
+    # err_array_fit_k[~ma.getmaskarray(err_array_fit_k)] = \
+    #     err_array_fit_k[~ma.getmaskarray(err_array_fit_k)] / \
+    #     resid(params=out.params, 
+    #           x=ma.getdata(wav_array_fit_k[~ma.getmaskarray(wav_array_fit_k)]).value, 
+    #           model=bkgdmod)
+
+    flux_array_fit_k = flux_array_fit_k / resid(params=out.params, 
+                                                x=wav_array_fit_k.value, 
+                                                model=bkgdmod)
+
+    err_array_fit_k = err_array_fit_k / resid(params=out.params, 
+                                              x=wav_array_fit_k.value, 
+                                              model=bkgdmod)
+
+    flux_array_fit_k = ma.array(flux_array_fit_k, mask=mask)
+    err_array_fit_k = ma.array(err_array_fit_k, mask=mask)
+
+
+    if verbose & show_continuum_fit:
+
+        plot_continum(x, 
+                      y, 
+                      er,
+                      wav, 
+                      flux, 
+                      err, 
+                      False, 
+                      out.params, 
+                      bkgdmod, 
+                      None, 
+                      continuum_region, 
+                      maskout, 
+                      w0, 
+                      reject_outliers, 
+                      wav_array_blue, 
+                      flux_array_blue, 
+                      wav_array_red, 
+                      flux_array_red)
+
+
+    return (flux_array_fit_k, err_array_fit_k)
+
+
+def make_model_mfica(mfica_n_weights=10,
+                     mfica_shift_vary=False):
+
+    # Read components 
+    comps = np.genfromtxt('/data/vault/phewett/ICAtest/DR12exp/Spectra/hbeta_2154_c10.dat')
+    
+    comps_wav = comps[:, 0]
+    comps = comps[:, 1:mfica_n_weights+1]
+
+    #--------------------------------------------------------------------------------------
+
+    """
+    Take out slope from spectrum. Found by fitting power-law in emission line-free windows
+
+    fname = '/home/phewett/projects/sdss_redshifts/qsomod_z250_ng.dat'
+    wav, flux = np.genfromtxt(fname, unpack=True)
+    
+    windows free from strong emission (except fe)
+    
+    mask = ((wav > 4200) & (wav < 4230)) |\
+           ((wav > 4435) & (wav < 4700)) |\
+           ((wav > 5100) & (wav < 5535))
+
+    mod = PowerLawModel()
+    pars = mod.make_params() 
+
+    result = mod.fit(flux[mask], x=wav[mask])
+
+    print result.params['exponent'].value, result.params['amplitude'].value
+
+
+    """ 
+    
+    mod = PowerLawModel()
+    pars = mod.make_params() 
+    pars['exponent'].value = -2.27531304895 
+    pars['amplitude'].value = 112798878.981
+
+    comps = comps / mod.eval(params=pars, x=comps_wav)[:, None]
+    
+    weights = Parameters() 
+
+    weights.add('w1', value=0.1193, min=0.0)
+    
+    if mfica_n_weights >= 2:
+        weights.add('w2', value=0.0971, min=0.0)
+    
+    if mfica_n_weights >= 3:
+        weights.add('w3', value=0.0467, min=0.0)
+    
+    if mfica_n_weights >= 4:
+        weights.add('w4', value=0.0102, min=0.0)
+    
+    if mfica_n_weights >= 5:
+        weights.add('w5', value=0.0131, min=0.0)
+    
+    if mfica_n_weights >= 6:
+        weights.add('w6', value=0.0205, min=0.0)
+    
+    # Correction terms --------------------------
+
+    if mfica_n_weights >= 7:
+        weights.add('w7', value=0.0)
+    
+    if mfica_n_weights >= 8:
+        weights.add('w8', value=0.0)
+    
+    if mfica_n_weights >= 9:
+        weights.add('w9', value=-0.0)
+    
+    if mfica_n_weights >= 10:
+        weights.add('w10', value=-0.0)
+    
+    shift_min = doppler2wave(-500.0*(u.km/u.s), w0=5008.239*u.AA).value - 5008.239
+    shift_max = doppler2wave(500.0*(u.km/u.s), w0=5008.239*u.AA).value - 5008.239
+
+    weights.add('shift', value=0.0, vary=mfica_shift_vary, min=shift_min, max=shift_max)    
+
+    return comps_wav, comps, weights 
 
 
 def make_model_hb(xscale=1.0, 
@@ -3105,6 +3521,68 @@ def get_fwhm(vl, fl):
     return root2 - root1
 
 
+def get_shape(vl, fl):
+
+
+    """
+    Following Baskin & Loar 2005, calculate the shape of the line
+    This could certainly be optimized. 
+    """
+
+
+    half_max = np.max(fl) / 2.0
+
+    i = 0
+    while fl[i] < half_max:
+        i+=1
+    
+    root1 = vl[i]
+    
+    i = 0
+    while fl[-i] < half_max:
+        i+=1
+    
+    root2 = vl[-i]
+
+    fwhm = root2 - root1
+
+    quarter_max = np.max(fl) / 4.0 
+
+    i = 0
+    while fl[i] < quarter_max:
+        i+=1
+    
+    root1 = vl[i]
+    
+    i = 0
+    while fl[-i] < quarter_max:
+        i+=1
+    
+    root2 = vl[-i]
+
+    fwqm = root2 - root1
+
+    three_quarter_max = 3.0 * np.max(fl) / 4.0
+
+    i = 0
+    while fl[i] < three_quarter_max:
+        i+=1
+    
+    root1 = vl[i]
+    
+    i = 0
+    while fl[-i] < three_quarter_max:
+        i+=1
+    
+    root2 = vl[-i]
+
+    fw3qm = root2 - root1
+
+    return (fwqm + fw3qm) / 2.0 / fwhm  
+
+
+
+
 def get_eqw(vl, 
             fl, 
             w0=6564.89*u.AA, 
@@ -3193,7 +3671,13 @@ def get_broad_stats(vl,
                         w0=w0,
                         spec_norm=spec_norm)
 
-    return (fwhm, sd, md, eqw, peak_flux, func_center, broad_lum)
+
+
+    shape = get_shape(vl, fl)
+    
+
+
+    return (fwhm, sd, md, eqw, peak_flux, func_center, broad_lum, shape)
 
 def get_stats_oiii(out,
                    mod=None,
@@ -3506,16 +3990,16 @@ def get_stats_hb(out=None,
     dv = 1.0 # i think if this was anything else might need to change intergration.
     xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
 
-    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum = get_broad_stats(xs*xscale, 
-                                                                           integrand(xs),
-                                                                           dv=dv, 
-                                                                           w0=w0,
-                                                                           bkgdmod=bkgdmod,
-                                                                           bkgdpars_k=bkgdpars_k,
-                                                                           subtract_fe=subtract_fe,
-                                                                           sp_fe=sp_fe,
-                                                                           spec_norm=spec_norm,
-                                                                           z=z)    
+    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum, shape = get_broad_stats(xs*xscale, 
+                                                                                  integrand(xs),
+                                                                                  dv=dv, 
+                                                                                  w0=w0,
+                                                                                  bkgdmod=bkgdmod,
+                                                                                  bkgdpars_k=bkgdpars_k,
+                                                                                  subtract_fe=subtract_fe,
+                                                                                  sp_fe=sp_fe,
+                                                                                  spec_norm=spec_norm,
+                                                                                  z=z)    
 
     broad_fwhms = np.zeros(nGaussians)
     broad_cens = np.zeros(nGaussians)
@@ -3744,16 +4228,16 @@ def get_stats_ha(out=None,
     dv = 1.0 # i think if this was anything else might need to change intergration.
     xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
 
-    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum = get_broad_stats(xs*xscale, 
-                                                                           integrand(xs),
-                                                                           dv=dv, 
-                                                                           w0=w0,
-                                                                           bkgdmod=bkgdmod,
-                                                                           bkgdpars_k=bkgdpars_k,
-                                                                           subtract_fe=subtract_fe,
-                                                                           sp_fe=sp_fe,
-                                                                           spec_norm=spec_norm,
-                                                                           z=z)    
+    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum, shape = get_broad_stats(xs*xscale, 
+                                                                                 integrand(xs),
+                                                                                 dv=dv, 
+                                                                                 w0=w0,
+                                                                                 bkgdmod=bkgdmod,
+                                                                                 bkgdpars_k=bkgdpars_k,
+                                                                                 subtract_fe=subtract_fe,
+                                                                                 sp_fe=sp_fe,
+                                                                                 spec_norm=spec_norm,
+                                                                                 z=z)    
 
 
 
@@ -3934,15 +4418,15 @@ def get_stats_gh(out=None,
     dv = 1.0 # i think if this was anything else might need to change intergration.
     xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
     
-    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum = get_broad_stats(xs*xscale, 
-                                                                           integrand(xs),
-                                                                           dv=dv, 
-                                                                           w0=w0,
-                                                                           bkgdmod=bkgdmod,
-                                                                           bkgdpars_k=bkgdpars_k,
-                                                                           subtract_fe=subtract_fe,
-                                                                           spec_norm=spec_norm,
-                                                                           z=z)
+    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum, shape = get_broad_stats(xs*xscale, 
+                                                                                  integrand(xs),
+                                                                                  dv=dv, 
+                                                                                  w0=w0,
+                                                                                  bkgdmod=bkgdmod,
+                                                                                  bkgdpars_k=bkgdpars_k,
+                                                                                  subtract_fe=subtract_fe,
+                                                                                  spec_norm=spec_norm,
+                                                                                  z=z)
 
     fit_out = {'name':plot_title, 
                'fwhm':fwhm,
@@ -3951,7 +4435,8 @@ def get_stats_gh(out=None,
                'cen': func_center,
                'eqw':eqw,
                'broad_lum':np.log10(broad_lum.value),
-               'peak':peak_flux}    
+               'peak':peak_flux,
+               'shape':shape}    
 
     return fit_out 
 
@@ -3978,16 +4463,16 @@ def get_stats_multigauss(out=None,
     dv = 1.0 # i think if this was anything else might need to change intergration.
     xs = np.arange(line_region.value[0], line_region[1].value, dv) / xscale 
     
-    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum = get_broad_stats(xs*xscale, 
-                                                                           integrand(xs),
-                                                                           dv=dv, 
-                                                                           w0=w0,
-                                                                           bkgdmod=bkgdmod,
-                                                                           bkgdpars_k=bkgdpars_k,
-                                                                           subtract_fe=subtract_fe,
-                                                                           sp_fe=sp_fe,
-                                                                           spec_norm=spec_norm,
-                                                                           z=z)
+    fwhm, sd, md, eqw, peak_flux, func_center, broad_lum, shape = get_broad_stats(xs*xscale, 
+                                                                                  integrand(xs),
+                                                                                  dv=dv, 
+                                                                                  w0=w0,
+                                                                                  bkgdmod=bkgdmod,
+                                                                                  bkgdpars_k=bkgdpars_k,
+                                                                                  subtract_fe=subtract_fe,
+                                                                                  sp_fe=sp_fe,
+                                                                                  spec_norm=spec_norm,
+                                                                                  z=z)
 
     broad_fwhms = np.zeros(nGaussians)
     broad_cens = np.zeros(nGaussians)
@@ -4053,11 +4538,14 @@ def get_stats_multigauss(out=None,
     snr_line = np.median(f(varray[vmin: vmax]) / sarray[vmin: vmax])
 
 
-   #------------------------------------------------------------------------
+    #------------------------------------------------------------------------
     # Velocity offset of broad component relative to narrow component  
     # Already been sorted above
 
     broad_offset = broad_cens[0] - broad_cens[1]
+
+
+
 
     #------------------------------------------------------------------------
 
@@ -4082,7 +4570,8 @@ def get_stats_multigauss(out=None,
                'very_broad_frac':very_broad_frac,
                'narrow_fwhm':np.nan,
                'narrow_lum':np.nan,
-               'narrow_voff':np.nan}
+               'narrow_voff':np.nan,
+               'shape':shape}
 
     if emission_line == 'Hb':
 
@@ -4250,7 +4739,8 @@ def fit3(obj,
                        'snr':np.nan,
                        'dv':np.nan, 
                        'monolum':np.nan,
-                       'fe_ew':np.nan}
+                       'fe_ew':np.nan,
+                       'shape':np.nan}
 
             return fit_out 
 
@@ -4872,7 +5362,133 @@ def fit3(obj,
     return fit_out 
 
         
+def fit5(obj,
+         comps=None,
+         comps_wav=None,
+         weights=None,
+         fitting_method='nelder',
+         verbose=False,
+         plot_title='',
+         mfica_n_weights=10,
+         save_dir=None,
+         plot=False,
+         n_samples=1,
+         plot_savefig=None):
 
+    """
+    Fit MFICA components
+    """
+
+    k = obj[0]
+    x = obj[1]
+    y = obj[2]
+    er = obj[3]
+
+    out = minimize(mfica_resid,
+                   weights,
+                   kws={'comps':comps,
+                        'comps_wav':comps_wav,
+                        'x':np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value),  
+                        'data':ma.getdata(y[~ma.getmaskarray(y)]),
+                        'sigma':ma.getdata(er[~ma.getmaskarray(er)])},
+                   method=fitting_method,
+                   options={'maxiter':1e4, 'maxfev':1e4} 
+                   ) 
+
+
+    fit_out = {'name':plot_title,
+               'shift':out.params['shift'].value,
+               'w1':out.params['w1'].value}
+
+    if mfica_n_weights >= 2:
+        fit_out['w2'] = out.params['w2'].value
+    else:
+        fit_out['w2'] = np.nan 
+    
+    if mfica_n_weights >= 3:
+        fit_out['w3'] = out.params['w3'].value
+    else:
+        fit_out['w3'] = np.nan
+    
+    if mfica_n_weights >= 4:
+        fit_out['w4'] = out.params['w4'].value
+    else:
+        fit_out['w4'] = np.nan
+    
+    if mfica_n_weights >= 5:
+        fit_out['w5'] = out.params['w5'].value
+    else:
+        fit_out['w5'] = np.nan
+    
+    if mfica_n_weights >= 6:
+        fit_out['w6'] = out.params['w6'].value
+    else:
+        fit_out['w6'] = np.nan
+    
+    if mfica_n_weights >= 7:
+        fit_out['w7'] = out.params['w7'].value
+    else:
+        fit_out['w7'] = np.nan
+    
+    if mfica_n_weights >= 8:
+        fit_out['w8'] = out.params['w8'].value
+    else:
+        fit_out['w8'] = np.nan
+    
+    if mfica_n_weights >= 9:
+        fit_out['w9'] = out.params['w9'].value
+    else:
+        fit_out['w9'] = np.nan
+    
+    if mfica_n_weights >= 10:
+        fit_out['w10'] = out.params['w10'].value
+    else:
+        fit_out['w10'] = np.nan
+    
+    
+    fit_out = dict(oiii_reconstruction(out).items() + fit_out.items())
+
+    fit_out['shift'] = wave2doppler((5008.239 + fit_out['shift'])*u.AA, w0=5008.239*u.AA).value
+
+    if verbose: 
+
+        print out.message 
+
+        for key, value in fit_out.iteritems():
+
+            
+            if key == 'name':
+                pass
+            else:
+                print key + ' {0:.5f}'.format(value) 
+
+        print colored(out.redchi, 'red')
+
+    if save_dir is not None:
+
+        fittxt = ''    
+        fittxt += strftime("%Y-%m-%d %H:%M:%S", gmtime()) + '\n \n'
+        fittxt += plot_title + '\n \n'
+        fittxt += r'Converged with chi-squared = ' + str(out.chisqr) + ', DOF = ' + str(out.nfree) + '\n \n'
+        fittxt += fit_report(out.params)
+    
+        with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
+            f.write(fittxt) 
+
+    if plot & (n_samples == 1): 
+
+        plot_mfica_fit(mfica_n_weights=mfica_n_weights,
+                       xi=x,
+                       yi=y,
+                       dyi=er,
+                       out=out,
+                       comps=comps,
+                       comps_wav=comps_wav,
+                       plot_savefig=plot_savefig,
+                       verbose=verbose,
+                       save_dir=save_dir) 
+
+    return fit_out 
 
 def fit_line(wav,
              dw,
@@ -4920,9 +5536,11 @@ def fit_line(wav,
              mfica_n_weights=12, 
              mfica_shift_vary=True,
              z_IR = None,
+             z_mfica = None,
              fix_oiii_peak_ratio = True,
              show_continuum_fit = True,
-             load_fit = False):
+             load_fit = False,
+             debug=False):
 
 
     """
@@ -5008,7 +5626,8 @@ def fit_line(wav,
                            'peak', 
                            'redchi', 
                            'snr', 
-                           'monolum']
+                           'monolum',
+                           'shape']
 
             if pseudo_continuum_fit:
 
@@ -5028,7 +5647,7 @@ def fit_line(wav,
                            'snr']
 
             if emission_line == 'MFICA':
-
+                
                 columns = ['w1',
                            'w2',
                            'w3',
@@ -5039,8 +5658,14 @@ def fit_line(wav,
                            'w8',
                            'w9',
                            'w10',
-                           'w11',
-                           'w12'] 
+                           'shift',
+                           'mfica_oiii_v05',
+                           'mfica_oiii_v10',
+                           'mfica_oiii_v25',
+                           'mfica_oiii_v50',
+                           'mfica_oiii_v75',
+                           'mfica_oiii_v90',
+                           'mfica_oiii_v95']
 
             if emission_line == 'OIII':
 
@@ -5077,16 +5702,22 @@ def fit_line(wav,
     # without having to change the masterlist file, run make_html etc. 
     # just use for quick solution and then change masterfile
 
-    if (emission_line == 'MFICA') | (emission_line == 'OIII'):
+    if (emission_line == 'OIII') & (z_IR is not None):
 
-        if z_IR is not None:
+        z = z_IR  
 
-            z = z_IR  
+    if (emission_line == 'MFICA') & (z_mfica is not None):
+
+        z = z_mfica
+
 
     # Transform to quasar rest-frame
     wav =  wav / (1.0 + z)
     wav = wav*u.AA 
     dw = dw / (1.0 + z) # don't actually use this but if I did be careful if spectrum is rebinned
+
+
+
 
     # Normalise spectrum
 
@@ -5129,8 +5760,13 @@ def fit_line(wav,
                            'w8':np.nan, 
                            'w9':np.nan, 
                            'w10':np.nan, 
-                           'w11':np.nan, 
-                           'w12':np.nan,
+                           'mfica_oiii_v05':np.nan,
+                           'mfica_oiii_v10':np.nan,
+                           'mfica_oiii_v25':np.nan,
+                           'mfica_oiii_v50':np.nan,
+                           'mfica_oiii_v75':np.nan,
+                           'mfica_oiii_v90':np.nan,
+                           'mfica_oiii_v95':np.nan,
                            'shift':np.nan}
 
             elif emission_line == 'OIII':
@@ -5193,7 +5829,8 @@ def fit_line(wav,
                            'snr':np.nan,
                            'dv':np.nan, 
                            'monolum':np.nan,
-                           'fe_ew':np.nan}
+                           'fe_ew':np.nan,
+                           'shape':np.nan}
             
             if save_dir is not None:
     
@@ -5254,10 +5891,13 @@ def fit_line(wav,
 
         flux_array = flux.reshape(1, n_elements) 
         flux_array_norebin = flux_norebin.reshape(1, n_elements_norebin) 
-    
+
+
     wav_array = np.repeat(wav.reshape(1, n_elements), n_samples, axis=0) 
     err_array = np.repeat(err.reshape(1, n_elements), n_samples, axis=0) 
     vdat_array = wave2doppler(wav_array, w0)
+
+    
 
     wav_array_norebin = np.repeat(wav_norebin.reshape(1, n_elements_norebin), n_samples, axis=0) 
     err_array_norebin = np.repeat(err_norebin.reshape(1, n_elements_norebin), n_samples, axis=0) 
@@ -5270,7 +5910,8 @@ def fit_line(wav,
     if plot_region.unit == (u.km/u.s):
         plot_region = doppler2wave(plot_region, w0)
 
-    mask = (ma.getdata(wav_array).value < plot_region[0].value) | (ma.getdata(wav_array).value > plot_region[1].value) 
+    mask = (ma.getdata(wav_array).value < plot_region[0].value) |\
+           (ma.getdata(wav_array).value > plot_region[1].value) 
 
     flux_array_plot = ma.masked_where(mask, flux_array)
     wav_array_plot = ma.masked_where(mask, wav_array)
@@ -5283,10 +5924,13 @@ def fit_line(wav,
     mask = (np.isnan(flux_array)) | (err_array < 0.0) 
     mask_norebin = (np.isnan(flux_array_norebin)) | (err_array_norebin < 0.0) 
 
+    # print flux_array
+
     flux_array = ma.masked_where(mask, flux_array)
     wav_array = ma.masked_where(mask, wav_array)
     err_array = ma.masked_where(mask, err_array)
-    vdat_array = ma.masked_where(mask, vdat_array)      
+    vdat_array = ma.masked_where(mask, vdat_array) 
+
 
     flux_array_norebin = ma.masked_where(mask_norebin, flux_array_norebin)
     wav_array_norebin = ma.masked_where(mask_norebin, wav_array_norebin)
@@ -5406,6 +6050,7 @@ def fit_line(wav,
     if continuum_region[1].unit == (u.km/u.s):
         continuum_region[1] = doppler2wave(continuum_region[1], w0)
 
+
     # if fitting gauss hermite model for CIV, we also fit in the continuum regions to extrapolate through red shelf. 
 
     if fit_model == 'GaussHermite':
@@ -5437,6 +6082,7 @@ def fit_line(wav,
     wav_array_red = ma.masked_where(red_mask, wav_array)
     err_array_red = ma.masked_where(red_mask, err_array)
     vdat_array_red = ma.masked_where(red_mask, vdat_array)
+
 
     #------------------------------------------------------------------------------------------------------------------------------
 
@@ -5580,217 +6226,120 @@ def fit_line(wav,
 
    
         
-    ##############################################################################################  
+    #-------------------------------------------------------------------------------------
 
 
     if emission_line == 'MFICA': 
 
-        # Read components 
-        comps = np.genfromtxt('/data/vault/phewett/ICAtest/VivGals/CVilforth/QS2402_12c.comp')
-        comps = comps[:, :mfica_n_weights]
-    
-        comps_wav = np.genfromtxt('/data/vault/phewett/ICAtest/VivGals/CVilforth/wav33005100.dat')
-    
-        weights = Parameters() 
-    
-        weights.add('w1', value=0.1283, min=0.0)
-    
-        if mfica_n_weights >= 2:
-            weights.add('w2', value=0.0858, min=0.0)
-    
-        if mfica_n_weights >= 3:
-            weights.add('w3', value=0.0869, min=0.0)
-    
-        if mfica_n_weights >= 4:
-            weights.add('w4', value=0.1111, min=0.0)
-    
-        if mfica_n_weights >= 5:
-            weights.add('w5', value=0.1179, min=0.0)
-    
-        if mfica_n_weights >= 6:
-            weights.add('w6', value=0.0169, min=0.0)
-    
-        if mfica_n_weights >= 7:
-            weights.add('w7', value=0.0061, min=0.0)
-    
-        if mfica_n_weights >= 8:
-            weights.add('w8', value=0.0001)
-    
-        if mfica_n_weights >= 9:
-            weights.add('w9', value=0.0002)
-    
-        if mfica_n_weights >= 10:
-            weights.add('w10', value=-0.0006)
-    
-        if mfica_n_weights >= 11:
-            weights.add('w11', value=-0.0001)
-    
-        if mfica_n_weights == 12:
-            weights.add('w12', value=0.0001)
-    
-        shift_min = doppler2wave(-500.0*(u.km/u.s), w0=5008.239*u.AA).value - 5008.239
-        shift_max = doppler2wave(500.0*(u.km/u.s), w0=5008.239*u.AA).value - 5008.239
-
-        # weights.add('shift', value=0.0, vary=mfica_shift_vary, min=shift_min, max=shift_max)
-        weights.add('shift', value=0.0, vary=mfica_shift_vary, min=shift_min, max=shift_max)
-
-        xi = np.array(wav_array_fit[~ma.getmaskarray(wav_array_fit)].flatten())
-        yi = np.array(flux_array_fit[~ma.getmaskarray(flux_array_fit)].flatten())
-        dyi = np.array(err_array_fit[~ma.getmaskarray(err_array_fit)].flatten())
-
-        out = minimize(mfica_resid,
-                       weights,
-                       kws={'comps':comps,
-                            'comps_wav':comps_wav,
-                            'x':xi,  
-                            'data':yi,
-                            'sigma':dyi},
-                       method=fitting_method,
-                       options={'maxiter':1e4, 'maxfev':1e4} 
-                       ) 
-
-        
-        fit_out = {'name':plot_title,
-                   'w1':out.params['w1'].value,
-                   'shift':out.params['shift'].value}
-
-        if mfica_n_weights >= 2:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan 
-    
-        if mfica_n_weights >= 3:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if mfica_n_weights >= 4:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if mfica_n_weights >= 5:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if mfica_n_weights >= 6:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if mfica_n_weights >= 7:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if mfica_n_weights >= 8:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if mfica_n_weights >= 9:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if mfica_n_weights >= 10:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if mfica_n_weights >= 11:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if mfica_n_weights == 12:
-            fit_out['w2'] = out.params['w2'].value
-        else:
-            fit_out['w2'] = np.nan
-    
-        if verbose: 
-
-            print out.message 
-
-            for key, value in out.params.valuesdict().iteritems():
-                print key + ' {0:.3f}'.format(value)
 
 
-        if save_dir is not None:
+        # Approximately take out slope ---------------------------------------------------------------
 
-            fittxt = ''    
-            fittxt += strftime("%Y-%m-%d %H:%M:%S", gmtime()) + '\n \n'
-            fittxt += plot_title + '\n \n'
-            fittxt += r'Converged with chi-squared = ' + str(out.chisqr) + ', DOF = ' + str(out.nfree) + '\n \n'
-            fittxt += fit_report(out.params)
-        
-            with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
-                f.write(fittxt) 
+        xdat_cont = ma.concatenate((wav_array_blue, wav_array_red), axis=1)
+        ydat_cont = ma.concatenate((flux_array_blue, flux_array_red), axis=1)
+        yerr_cont = ma.concatenate((err_array_blue, err_array_red), axis=1)
 
-        if plot: 
+        fitobj = [] 
+
+        for k in range(n_samples):
+
+            fitobj.append([k, 
+                           xdat_cont[k], 
+                           ydat_cont[k], 
+                           yerr_cont[k], 
+                           flux_array_fit[k, :], 
+                           err_array_fit[k, :],
+                           wav_array_fit[k, :]])
+
+        fit4_p = partial(fit4, 
+                         n_samples = n_samples, 
+                         wav = wav, 
+                         flux = flux, 
+                         err = err, 
+                         verbose = verbose, 
+                         wav_array_blue = wav_array_blue, 
+                         flux_array_blue = flux_array_blue, 
+                         wav_array_red = wav_array_red, 
+                         flux_array_red = flux_array_red, 
+                         reject_outliers = reject_outliers, 
+                         w0 = w0, 
+                         maskout = maskout, 
+                         continuum_region = continuum_region,
+                         show_continuum_fit = show_continuum_fit)
     
-            fig, axs = plt.subplots(2, 1, figsize=(6, 8))
-    
-            plt.subplots_adjust(hspace=0.0) 
-        
-            color = matplotlib.cm.get_cmap('Set2')
-            color = color(np.linspace(0, 1, mfica_n_weights))
+        if parallel:
             
-            axs[0].plot(xi, mfica_model(out.params, comps, comps_wav, xi), color=color[0], zorder=3, lw=2)
-            axs[0].errorbar(xi, yi, yerr=dyi, linestyle='', color='grey', alpha=0.2, zorder=1)
-            axs[0].plot(xi, yi, marker='o', linestyle='', markerfacecolor='None', markeredgecolor='black', alpha=0.4, markersize=1, zorder=2)
-         
-            for i in range(1, mfica_n_weights+1):
-                axs[0].plot(xi, mfica_get_comp(i, out.params, comps, comps_wav, xi), c=color[i-1])
+            p = Pool(cores)
+            out = p.map(fit4_p, fitobj)
+            p.close() 
+            p.join()
     
-            axs[0].axvline(5008.239, linestyle='--', c='red', zorder=0)
-            axs[0].axvline(4960.295, linestyle='--', c='red', zorder=0)
-         
-            axs[0].set_ylim(-0.1 * np.max(mfica_model(out.params, comps, comps_wav, xi)), 
-                            1.1 * np.max(mfica_model(out.params, comps, comps_wav, xi)))
-
-            axs[0].set_xlim(xi.min(), xi.max())
-
-            # plot rejected points   
-
-            xi_reject = np.array(wav_array_fit[ma.getmaskarray(wav_array_fit)].flatten())
-            yi_reject = np.array(flux_array_fit[ma.getmaskarray(flux_array_fit)].flatten())
-            dyi_reject = np.array(err_array_fit[ma.getmaskarray(err_array_fit)].flatten())
-
-            axs[0].errorbar(xi_reject, yi_reject, yerr=dyi_reject, linestyle='', color='grey', alpha=0.2, zorder=1)
-            axs[0].plot(xi_reject, yi_reject, marker='o', linestyle='', markerfacecolor='None', markeredgecolor='red', alpha=0.4, markersize=1, zorder=2)
-    
-            axs[1].plot(xi, 
-                        (yi - mfica_model(out.params, comps, comps_wav, xi)) / dyi, 
-                        linestyle='', 
-                        marker='o', 
-                        markersize=3,
-                        markerfacecolor=color[0],
-                        markeredgecolor='None')
-    
-            axs[1].set_ylim(-5, 5)
-    
-            axs[1].axhline(0.0, color='black', linestyle='--')
-    
-            fig.tight_layout()
-
-            if plot_savefig is not None:
-                fig.savefig(os.path.join(save_dir, plot_savefig))
-        
-
-            if verbose: 
-                global coords
-                coords = [] 
-                cid = fig.canvas.mpl_connect('button_press_event', onclick3)
-
-            if verbose:
-                plt.show(1)
+        else:
             
-            plt.close()
+            out = map(fit4_p, fitobj)
 
 
-        return fit_out 
+        for k, o in enumerate(out):
+    
+            flux_array_fit[k, :] = o[0]
+            err_array_fit[k, :] = o[1] 
+
+
+        # Now do fit -------------------------------------------------
+
+        fitobj = []
+    
+        for k in range(n_samples):
+            
+            fitobj.append([k, 
+                           wav_array_fit[k, :], 
+                           flux_array_fit[k, :], 
+                           err_array_fit[k, :]])
+
+        comps_wav, comps, weights = make_model_mfica(mfica_n_weights=mfica_n_weights,
+                                                     mfica_shift_vary=mfica_shift_vary)
+
+        fit5_p = partial(fit5,
+                         comps=comps,
+                         comps_wav=comps_wav,
+                         weights=weights,
+                         fitting_method=fitting_method,
+                         verbose=verbose,
+                         plot_title=plot_title,
+                         mfica_n_weights=mfica_n_weights,
+                         save_dir=save_dir,
+                         plot=plot,
+                         n_samples=n_samples,
+                         plot_savefig=plot_savefig)
+        
+        if parallel:
+            
+            p = Pool(cores)
+            out = p.map(fit5_p, fitobj)
+            p.close() 
+            p.join()
+        
+        else:
+            
+            out = map(fit5_p, fitobj)
+        
+        
+        if (save_dir is not None) & (n_samples > 1):
+
+            
+            for k in range(n_samples):
+                for col in df_out:
+                    df_out.loc[k, col] = out[k][col]
+        
+          
+            df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+             
+        else:
+        
+            return out[0]
+
+
+
 
 
     if bkgd_median is True:
@@ -6024,6 +6573,7 @@ def fit_line(wav,
     fitobj = []
     
     for k in range(n_samples):
+
         fitobj.append([k, 
                        vdat_array_fit[k, :], 
                        flux_array_fit[k, :], 
