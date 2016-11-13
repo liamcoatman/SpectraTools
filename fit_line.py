@@ -551,7 +551,7 @@ def PLModel(x, amplitude, exponent):
 
     return amp*x**exponent 
 
-def oiii_reconstruction(out, ax=None):
+def oiii_reconstruction(best_weights, ax=None):
 
     """
     Reconstruct just OIII emission from ICA components
@@ -560,20 +560,19 @@ def oiii_reconstruction(out, ax=None):
     cs = palettable.colorbrewer.diverging.RdBu_7.mpl_colors 
     
 
-    comps_wav, comps, w = make_model_mfica(mfica_n_weights=10,
-                                           mfica_shift_vary=False)
+    comps_wav, comps, w = make_model_mfica(mfica_n_weights=10)
     
     w['w1'].value = 0.0 
     w['w2'].value = 0.0
     w['w3'].value = 0.0
-    w['w4'].value = out.params['w4'].value 
-    w['w5'].value = out.params['w5'].value 
-    w['w6'].value = out.params['w6'].value 
-    w['w7'].value = out.params['w7'].value 
-    w['w8'].value = out.params['w8'].value 
-    w['w9'].value = out.params['w9'].value 
-    w['w10'].value = out.params['w10'].value 
-    w['shift'].value = out.params['shift'].value 
+    w['w4'].value = best_weights['w4']
+    w['w5'].value = best_weights['w5']
+    w['w6'].value = best_weights['w6']
+    w['w7'].value = best_weights['w7']
+    w['w8'].value = best_weights['w8']
+    w['w9'].value = best_weights['w9']
+    w['w10'].value = best_weights['w10']
+    w['shift'].value = best_weights['shift']
 
     flux = mfica_model(w, comps, comps_wav, comps_wav)
 
@@ -749,7 +748,19 @@ def plot_mfica_fit(mfica_n_weights=10,
                 zorder=2)
     #---------------------------------------------------------------------------
     
-    oiii_reconstruction(out, ax=axs[1])
+    best_weights = {'w1': out.params['w1'].value,
+                    'w2': out.params['w2'].value,
+                    'w3': out.params['w3'].value,
+                    'w4': out.params['w4'].value,
+                    'w5': out.params['w5'].value,
+                    'w6': out.params['w6'].value,
+                    'w7': out.params['w7'].value,
+                    'w8': out.params['w8'].value,
+                    'w9': out.params['w9'].value,
+                    'w10': out.params['w10'].value,
+                    'shift': out.params['shift'].value}
+
+    oiii_reconstruction(best_weights, ax=axs[1])
     
 
     #---------------------------------------------------------------------------
@@ -2130,7 +2141,10 @@ def mfica_model(weights, comps, comps_wav, x):
     for i in range(comps.shape[1]-1):
         fl += weights['w{}'.format(i+2)].value * comps[:, i+1] 
 
-    f = interp1d(comps_wav + weights['shift'].value, 
+    # because otherwise tiny shifts don't do anything to the chi-squared
+    shift = weights['shift'].value 
+
+    f = interp1d(comps_wav + shift, 
                  fl, 
                  bounds_error=False, 
                  fill_value=0.0)
@@ -2154,6 +2168,8 @@ def mfica_resid(weights=None,
                 x=None, 
                 data=None, 
                 sigma=None):
+
+    print weights['shift'].value
 
     if data is not None:
 
@@ -2680,8 +2696,7 @@ def fit4(obj,
     return (flux_array_fit_k, err_array_fit_k)
 
 
-def make_model_mfica(mfica_n_weights=10,
-                     mfica_shift_vary=False):
+def make_model_mfica(mfica_n_weights=10):
 
     # Read components 
     comps = np.genfromtxt('/data/vault/phewett/ICAtest/DR12exp/Spectra/hbeta_2154_c10.dat')
@@ -2752,11 +2767,9 @@ def make_model_mfica(mfica_n_weights=10,
     
     if mfica_n_weights >= 10:
         weights.add('w10', value=-0.0)
-    
-    shift_min = doppler2wave(-500.0*(u.km/u.s), w0=5008.239*u.AA).value - 5008.239
-    shift_max = doppler2wave(500.0*(u.km/u.s), w0=5008.239*u.AA).value - 5008.239
 
-    weights.add('shift', value=0.0, vary=mfica_shift_vary, min=shift_min, max=shift_max)    
+    weights.add('shift', value=5.0)
+
 
     return comps_wav, comps, weights 
 
@@ -5384,6 +5397,7 @@ def fit5(obj,
     y = obj[2]
     er = obj[3]
 
+
     out = minimize(mfica_resid,
                    weights,
                    kws={'comps':comps,
@@ -5395,10 +5409,11 @@ def fit5(obj,
                    options={'maxiter':1e4, 'maxfev':1e4} 
                    ) 
 
+ 
 
     fit_out = {'name':plot_title,
-               'shift':out.params['shift'].value,
-               'w1':out.params['w1'].value}
+               'w1':out.params['w1'].value,
+               'shift':out.params['shift'].value}
 
     if mfica_n_weights >= 2:
         fit_out['w2'] = out.params['w2'].value
@@ -5444,11 +5459,21 @@ def fit5(obj,
         fit_out['w10'] = out.params['w10'].value
     else:
         fit_out['w10'] = np.nan
-    
-    
-    fit_out = dict(oiii_reconstruction(out).items() + fit_out.items())
 
-    fit_out['shift'] = wave2doppler((5008.239 + fit_out['shift'])*u.AA, w0=5008.239*u.AA).value
+    best_weights = {'w1': out.params['w1'].value,
+                    'w2': out.params['w2'].value,
+                    'w3': out.params['w3'].value,
+                    'w4': out.params['w4'].value,
+                    'w5': out.params['w5'].value,
+                    'w6': out.params['w6'].value,
+                    'w7': out.params['w7'].value,
+                    'w8': out.params['w8'].value,
+                    'w9': out.params['w9'].value,
+                    'w10': out.params['w10'].value,
+                    'shift': out.params['shift'].value}
+    
+    fit_out = dict(oiii_reconstruction(best_weights).items() + fit_out.items())
+
 
     if verbose: 
 
@@ -5534,7 +5559,6 @@ def fit_line(wav,
              oiii_broad_off=False,
              oiii_template=False,       
              mfica_n_weights=12, 
-             mfica_shift_vary=True,
              z_IR = None,
              z_mfica = None,
              fix_oiii_peak_ratio = True,
@@ -5715,9 +5739,6 @@ def fit_line(wav,
     wav =  wav / (1.0 + z)
     wav = wav*u.AA 
     dw = dw / (1.0 + z) # don't actually use this but if I did be careful if spectrum is rebinned
-
-
-
 
     # Normalise spectrum
 
@@ -6231,8 +6252,6 @@ def fit_line(wav,
 
     if emission_line == 'MFICA': 
 
-
-
         # Approximately take out slope ---------------------------------------------------------------
 
         xdat_cont = ma.concatenate((wav_array_blue, wav_array_red), axis=1)
@@ -6296,8 +6315,7 @@ def fit_line(wav,
                            flux_array_fit[k, :], 
                            err_array_fit[k, :]])
 
-        comps_wav, comps, weights = make_model_mfica(mfica_n_weights=mfica_n_weights,
-                                                     mfica_shift_vary=mfica_shift_vary)
+        comps_wav, comps, weights = make_model_mfica(mfica_n_weights=mfica_n_weights)
 
         fit5_p = partial(fit5,
                          comps=comps,
