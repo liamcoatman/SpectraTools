@@ -674,8 +674,23 @@ def plot_mfica_fit(mfica_n_weights=10,
 
     xs = np.arange(xi_noreject.min(), xi_noreject.max(), 1)
 
+    params = Parameters() 
+
+    params.add('w1', value=out['w1']) 
+    params.add('w2', value=out['w2'])
+    params.add('w3', value=out['w3'])
+    params.add('w4', value=out['w4'])
+    params.add('w5', value=out['w5'])
+    params.add('w6', value=out['w6'])
+    params.add('w7', value=out['w7'])
+    params.add('w8', value=out['w8'])
+    params.add('w9', value=out['w9'])
+    params.add('w10', value=out['w10'])
+    params.add('shift', value=out['shift'])
+
+
     axs[0].plot(xs, 
-                mfica_model(out.params, 
+                mfica_model(params, 
                             comps, 
                             comps_wav, 
                             xs), 
@@ -707,7 +722,7 @@ def plot_mfica_fit(mfica_n_weights=10,
 
         axs[0].plot(xs, 
                     mfica_get_comp(i, 
-                                   out.params, 
+                                   params, 
                                    comps, 
                                    comps_wav, 
                                    xs), 
@@ -717,8 +732,8 @@ def plot_mfica_fit(mfica_n_weights=10,
     axs[0].axvline(5008.239, linestyle='--', c='red', zorder=0)
     axs[0].axvline(4960.295, linestyle='--', c='red', zorder=0)
     
-    axs[0].set_ylim(-0.1 * np.max(mfica_model(out.params, comps, comps_wav, xi_noreject)), 
-                    1.1 * np.max(mfica_model(out.params, comps, comps_wav, xi_noreject)))
+    axs[0].set_ylim(-0.1 * np.max(mfica_model(params, comps, comps_wav, xi_noreject)), 
+                    1.1 * np.max(mfica_model(params, comps, comps_wav, xi_noreject)))
 
     axs[0].set_xlim(xi_noreject.min(), xi_noreject.max())
 
@@ -747,26 +762,15 @@ def plot_mfica_fit(mfica_n_weights=10,
                 markersize=1, 
                 zorder=2)
     #---------------------------------------------------------------------------
-    
-    best_weights = {'w1': out.params['w1'].value,
-                    'w2': out.params['w2'].value,
-                    'w3': out.params['w3'].value,
-                    'w4': out.params['w4'].value,
-                    'w5': out.params['w5'].value,
-                    'w6': out.params['w6'].value,
-                    'w7': out.params['w7'].value,
-                    'w8': out.params['w8'].value,
-                    'w9': out.params['w9'].value,
-                    'w10': out.params['w10'].value,
-                    'shift': out.params['shift'].value}
 
-    oiii_reconstruction(best_weights, ax=axs[1])
+
+    oiii_reconstruction(out, ax=axs[1])
     
 
     #---------------------------------------------------------------------------
 
     axs[2].plot(xi_noreject, 
-                (yi_noreject - mfica_model(out.params, comps, comps_wav, xi_noreject)) / dyi_noreject, 
+                (yi_noreject - mfica_model(params, comps, comps_wav, xi_noreject)) / dyi_noreject, 
                 linestyle='', 
                 marker='o', 
                 markersize=3,
@@ -2138,11 +2142,11 @@ def mfica_model(weights, comps, comps_wav, x):
 
     fl = weights['w1'].value * comps[:, 0]
 
-    for i in range(comps.shape[1]-1):
-        fl += weights['w{}'.format(i+2)].value * comps[:, i+1] 
+    for i in range(comps.shape[1] - 1):
+        fl += weights['w{}'.format(i+2)].value * comps[:, i+1]
 
     # because otherwise tiny shifts don't do anything to the chi-squared
-    shift = weights['shift'].value 
+    shift = weights['shift'].value * 10.0 
 
     f = interp1d(comps_wav + shift, 
                  fl, 
@@ -2169,7 +2173,6 @@ def mfica_resid(weights=None,
                 data=None, 
                 sigma=None):
 
-    print weights['shift'].value
 
     if data is not None:
 
@@ -2738,37 +2741,25 @@ def make_model_mfica(mfica_n_weights=10):
     weights = Parameters() 
 
     weights.add('w1', value=0.1193, min=0.0)
-    
-    if mfica_n_weights >= 2:
-        weights.add('w2', value=0.0971, min=0.0)
-    
-    if mfica_n_weights >= 3:
-        weights.add('w3', value=0.0467, min=0.0)
-    
-    if mfica_n_weights >= 4:
-        weights.add('w4', value=0.0102, min=0.0)
-    
-    if mfica_n_weights >= 5:
-        weights.add('w5', value=0.0131, min=0.0)
-    
-    if mfica_n_weights >= 6:
-        weights.add('w6', value=0.0205, min=0.0)
+    weights.add('w2', value=0.0971, min=0.0)
+    weights.add('w3', value=0.0467, min=0.0)
+    weights.add('w4', value=0.0102, min=0.0)
+    weights.add('w5', value=0.0131, min=0.0)
+    weights.add('w6', value=0.0205, min=0.0)
     
     # Correction terms --------------------------
 
-    if mfica_n_weights >= 7:
-        weights.add('w7', value=0.0)
-    
-    if mfica_n_weights >= 8:
-        weights.add('w8', value=0.0)
-    
-    if mfica_n_weights >= 9:
-        weights.add('w9', value=-0.0)
-    
-    if mfica_n_weights >= 10:
-        weights.add('w10', value=-0.0)
+    weights.add('w7', value=0.0)
+    weights.add('w8', value=0.0)
+    weights.add('w9', value=0.0)
+    weights.add('w10', value=0.0)
 
-    weights.add('shift', value=5.0)
+    weights.add('shift', value=-0.1)
+
+    if mfica_n_weights == 8:
+
+        weights['w9'].vary = False
+        weights['w10'].vary = False
 
 
     return comps_wav, comps, weights 
@@ -5386,7 +5377,8 @@ def fit5(obj,
          save_dir=None,
          plot=False,
          n_samples=1,
-         plot_savefig=None):
+         plot_savefig=None,
+         z=0.0):
 
     """
     Fit MFICA components
@@ -5409,72 +5401,112 @@ def fit5(obj,
                    options={'maxiter':1e4, 'maxfev':1e4} 
                    ) 
 
- 
+
+    
+    chis = []
+    shifts = np.arange(-10, 11, dtype=float) / 10.0
+
+    for shift in shifts: 
+
+        weights['w1'].value = out.params['w1'].value 
+        weights['w2'].value = out.params['w2'].value 
+        weights['w3'].value = out.params['w3'].value 
+        weights['w4'].value = out.params['w4'].value 
+        weights['w5'].value = out.params['w5'].value 
+        weights['w6'].value = out.params['w6'].value 
+        weights['w7'].value = out.params['w7'].value 
+        weights['w8'].value = out.params['w8'].value 
+        weights['w9'].value = out.params['w9'].value 
+        weights['w10'].value = out.params['w10'].value 
+        weights['shift'].value = shift 
+
+        xi = np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value)
+        yi = ma.getdata(y[~ma.getmaskarray(y)])
+        dyi = ma.getdata(er[~ma.getmaskarray(er)])
+
+        # just focus on area around oiii peak 
+
+        region = (xi > 4980) & (xi < 5035)
+
+        xi = xi[region]
+        yi = yi[region]
+        dyi = dyi[region]
+
+        val = mfica_resid(weights=weights, 
+                          comps=comps,
+                          comps_wav=comps_wav,
+                          x=xi, 
+                          data=yi, 
+                          sigma=dyi)
+
+        chis.append(val.sum())
+
+        # fit_out = {'name':plot_title,
+        #             'w1': weights['w1'].value,
+        #             'w2': weights['w2'].value,
+        #             'w3': weights['w3'].value,
+        #             'w4': weights['w4'].value,
+        #             'w5': weights['w5'].value,
+        #             'w6': weights['w6'].value,
+        #             'w7': weights['w7'].value,
+        #             'w8': weights['w8'].value,
+        #             'w9': weights['w9'].value,
+        #             'w10': weights['w10'].value,
+        #             'shift':weights['shift'].value}
+
+        # plot_mfica_fit(mfica_n_weights=mfica_n_weights,
+        #                xi=x,
+        #                yi=y,
+        #                dyi=er,
+        #                out=fit_out,
+        #                comps=comps,
+        #                comps_wav=comps_wav,
+        #                verbose=verbose)
+
+
+
+
+    # now minimize again with new starting point for shift
+
+    weights['shift'].value = shifts[np.argmin(np.array(chis))]
+
+    # fig, ax = plt.subplots() 
+    # ax.plot(shifts, chis)
+    # plt.show() 
+
+    out = minimize(mfica_resid,
+                   weights,
+                   kws={'comps':comps,
+                        'comps_wav':comps_wav,
+                        'x':np.asarray(ma.getdata(x[~ma.getmaskarray(x)]).value),  
+                        'data':ma.getdata(y[~ma.getmaskarray(y)]),
+                        'sigma':ma.getdata(er[~ma.getmaskarray(er)])},
+                   method=fitting_method,
+                   options={'maxiter':1e4, 'maxfev':1e4} 
+                   ) 
+
 
     fit_out = {'name':plot_title,
-               'w1':out.params['w1'].value,
+               'w1': out.params['w1'].value,
+               'w2': out.params['w2'].value,
+               'w3': out.params['w3'].value,
+               'w4': out.params['w4'].value,
+               'w5': out.params['w5'].value,
+               'w6': out.params['w6'].value,
+               'w7': out.params['w7'].value,
+               'w8': out.params['w8'].value,
+               'w9': out.params['w9'].value,
+               'w10': out.params['w10'].value,
                'shift':out.params['shift'].value}
+    
+    fit_out = dict(oiii_reconstruction(fit_out).items() + fit_out.items())
 
-    if mfica_n_weights >= 2:
-        fit_out['w2'] = out.params['w2'].value
-    else:
-        fit_out['w2'] = np.nan 
-    
-    if mfica_n_weights >= 3:
-        fit_out['w3'] = out.params['w3'].value
-    else:
-        fit_out['w3'] = np.nan
-    
-    if mfica_n_weights >= 4:
-        fit_out['w4'] = out.params['w4'].value
-    else:
-        fit_out['w4'] = np.nan
-    
-    if mfica_n_weights >= 5:
-        fit_out['w5'] = out.params['w5'].value
-    else:
-        fit_out['w5'] = np.nan
-    
-    if mfica_n_weights >= 6:
-        fit_out['w6'] = out.params['w6'].value
-    else:
-        fit_out['w6'] = np.nan
-    
-    if mfica_n_weights >= 7:
-        fit_out['w7'] = out.params['w7'].value
-    else:
-        fit_out['w7'] = np.nan
-    
-    if mfica_n_weights >= 8:
-        fit_out['w8'] = out.params['w8'].value
-    else:
-        fit_out['w8'] = np.nan
-    
-    if mfica_n_weights >= 9:
-        fit_out['w9'] = out.params['w9'].value
-    else:
-        fit_out['w9'] = np.nan
-    
-    if mfica_n_weights >= 10:
-        fit_out['w10'] = out.params['w10'].value
-    else:
-        fit_out['w10'] = np.nan
+    # seems weird that this depends on where to measure it
+    # maybe this is why people normally use a log scale? 
 
-    best_weights = {'w1': out.params['w1'].value,
-                    'w2': out.params['w2'].value,
-                    'w3': out.params['w3'].value,
-                    'w4': out.params['w4'].value,
-                    'w5': out.params['w5'].value,
-                    'w6': out.params['w6'].value,
-                    'w7': out.params['w7'].value,
-                    'w8': out.params['w8'].value,
-                    'w9': out.params['w9'].value,
-                    'w10': out.params['w10'].value,
-                    'shift': out.params['shift'].value}
-    
-    fit_out = dict(oiii_reconstruction(best_weights).items() + fit_out.items())
+    fit_out['z_ica'] = ((5008.239 + (out.params['shift'].value * 10.0)) * (1.0 + z)) / 5008.239
 
-
+   
     if verbose: 
 
         print out.message 
@@ -5506,7 +5538,7 @@ def fit5(obj,
                        xi=x,
                        yi=y,
                        dyi=er,
-                       out=out,
+                       out=fit_out,
                        comps=comps,
                        comps_wav=comps_wav,
                        plot_savefig=plot_savefig,
@@ -5689,7 +5721,8 @@ def fit_line(wav,
                            'mfica_oiii_v50',
                            'mfica_oiii_v75',
                            'mfica_oiii_v90',
-                           'mfica_oiii_v95']
+                           'mfica_oiii_v95',
+                           'z_ica']
 
             if emission_line == 'OIII':
 
@@ -5788,7 +5821,8 @@ def fit_line(wav,
                            'mfica_oiii_v75':np.nan,
                            'mfica_oiii_v90':np.nan,
                            'mfica_oiii_v95':np.nan,
-                           'shift':np.nan}
+                           'shift':np.nan,
+                           'z_ica':np.nan}
 
             elif emission_line == 'OIII':
 
@@ -6328,7 +6362,8 @@ def fit_line(wav,
                          save_dir=save_dir,
                          plot=plot,
                          n_samples=n_samples,
-                         plot_savefig=plot_savefig)
+                         plot_savefig=plot_savefig,
+                         z=z)
         
         if parallel:
             
