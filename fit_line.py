@@ -2613,7 +2613,8 @@ def fit4(obj,
          w0, 
          maskout, 
          continuum_region,
-         show_continuum_fit): 
+         show_continuum_fit,
+         save_dir): 
 
     """
     Fit power-law to background
@@ -2669,6 +2670,24 @@ def fit4(obj,
     err_array_fit_k = err_array_fit_k / resid(params=out.params, 
                                               x=wav_array_fit_k.value, 
                                               model=bkgdmod)
+
+    # save parameters 
+
+    # remove expressions from Parameters instance
+    # https://groups.google.com/forum/#!topic/lmfit-py/6tCcTNe307I
+    
+    if save_dir is not None: 
+
+        params_dump = deepcopy(out.params)
+        for v in params_dump:
+            params_dump[v].expr = None
+            
+        param_file = os.path.join(save_dir, 'my_params_remove_slope.txt')
+        parfile = open(param_file, 'w')
+        params_dump.dump(parfile)
+        parfile.close()
+
+
 
     flux_array_fit_k = ma.array(flux_array_fit_k, mask=mask)
     err_array_fit_k = ma.array(err_array_fit_k, mask=mask)
@@ -3698,7 +3717,8 @@ def get_stats_oiii(out,
                    farray=None,
                    sarray=None,
                    nGaussians=1,
-                   oiii_broad_off=False):
+                   oiii_broad_off=False,
+                   hb_narrow=False):
 
     mod_oiii_5007 = GaussianModel(prefix='oiii_5007_b_') + GaussianModel(prefix='oiii_5007_n_') 
     mod_oiii_5007_pars = mod_oiii_5007.make_params() 
@@ -3765,6 +3785,9 @@ def get_stats_oiii(out,
 
 
     try: 
+
+        # We use peak to avoid assigning a high S/N to objects which are fit with 
+        # low amplitude but very broad gaussians. 
         signal_oiii = np.max(integrand(varray_oiii/xscale))
 
         # rebin noise to 200 km/s - minimum in our sample 
@@ -3791,6 +3814,8 @@ def get_stats_oiii(out,
         noise_oiii = np.nanstd(farray_oiii_rebin - integrand_full(varray_oiii_rebin/xscale)) 
 
         snr_oiii = signal_oiii / noise_oiii
+
+
 
     except ValueError as e:
         snr_oiii = np.nan 
@@ -3832,7 +3857,8 @@ def get_stats_oiii(out,
     # snr_hb = np.median(integrand_hb(varray_hb/xscale) / sarray_hb)
 
 
-    #------------------------------------------------------------------------
+
+    #-------------------------------------------------------------------------
 
     """Alternative calculation of S/N in Hb"""
 
@@ -3879,38 +3905,6 @@ def get_stats_oiii(out,
 
     #------------------------------------------------------------------------
 
-    # Get centroid of narrower broad hb gaussian to use for redshift
-    # almost always doesn't matter if use broader one, since peaks 
-    # are normally fixed. 
-
-    hb_centroids = np.array(out.params['hb_b_0_center'].value)
-    hb_fwhms = np.array(out.params['hb_b_0_fwhm'].value)
-
-    if nGaussians >= 2:
-        hb_centroids = np.append(hb_centroids, out.params['hb_b_1_center'].value)
-        hb_fwhms = np.append(hb_fwhms, out.params['hb_b_1_fwhm'].value)
-    if nGaussians >= 3:
-        hb_centroids = np.append(hb_centroids, out.params['hb_b_2_center'].value)
-        hb_fwhms = np.append(hb_fwhms, out.params['hb_b_2_fwhm'].value)
-
-    hb_centroids = np.atleast_1d(hb_centroids)
-    hb_fwhms = np.atleast_1d(hb_fwhms)
-
-    #------------------------------------------------------------------------
-
-    """z from peak of Hb profile
-       almost always the same as the peak
-       of the narrower component"""
-
-
-    hb_peak = xs[np.argmax(integrand_hb(xs))]*xscale
-    whb = doppler2wave(hb_peak*(u.km/u.s), w0)
-    whb = whb * (1.0 + z) 
-    hb_z = (whb / w0) - 1.0    
-
-
-    #------------------------------------------------------------------------
-
     
     # Get centroid of narrower OIII component 
     if oiii_broad_off is True:
@@ -3934,6 +3928,36 @@ def get_stats_oiii(out,
 
     #------------------------------------------------------------------------
     
+    """Calculate redshift from peak/median of broad+narrow components"""
+
+    mod_hb = ConstantModel()
+
+    if hb_narrow:
+        mod_hb += GaussianModel(prefix='hb_n_')
+
+    for i in range(nGaussians):
+        mod_hb += GaussianModel(prefix='hb_b_{}_'.format(i))  
+    
+    pars_hb = mod_hb.make_params()
+
+    for key, value in out.params.valuesdict().iteritems():
+        if key.startswith('hb_'):
+            pars_hb[key].value = value 
+
+    pars_hb['c'].value = 0.0
+
+    integrand_hb = lambda x: mod_hb.eval(params=pars_hb, x=np.array(x))
+
+    peak = xs[np.argmax(integrand_hb(xs))]*xscale
+
+    w = doppler2wave(peak*(u.km/u.s), w0) * (1.0 + z)
+    hb_z = (w / w0) - 1.0    
+
+
+    #------------------------------------------------------------------------
+
+
+    
     fit_out = {'name':plot_title,
                'oiii_5007_v5':xs[np.argmin(np.abs(cdf - 0.05))],
                'oiii_5007_v10':xs[np.argmin(np.abs(cdf - 0.1))],
@@ -3949,7 +3973,6 @@ def get_stats_oiii(out,
                'oiii_peak_ratio':out.params['oiii_peak_ratio'].value, 
                'oiii_5007_narrow_z':oiii_narrow_z,
                'oiii_5007_full_peak_z':oiii_full_peak_z,
-               'hb_centroid':hb_centroids[np.argmin(hb_fwhms)],
                'hb_snr':snr_hb, 
                'hb_z':hb_z,
                'redchi':out.redchi}
@@ -4969,7 +4992,8 @@ def fit3(obj,
                                  farray=ma.getdata(y[~ma.getmaskarray(y)]),
                                  sarray=ma.getdata(er[~ma.getmaskarray(er)]),
                                  nGaussians=nGaussians,
-                                 oiii_broad_off=oiii_broad_off)
+                                 oiii_broad_off=oiii_broad_off,
+                                 hb_narrow=hb_narrow)
 
 
     elif fit_model == 'Hb':
@@ -5504,7 +5528,7 @@ def fit5(obj,
     # seems weird that this depends on where to measure it
     # maybe this is why people normally use a log scale? 
 
-    fit_out['z_ica'] = ((5008.239 + (out.params['shift'].value * 10.0)) * (1.0 + z)) / 5008.239
+    fit_out['z_ica'] = ((5008.239 + (out.params['shift'].value * 10.0)) * (1.0 + z)) / 5008.239 - 1.0 
 
    
     if verbose: 
@@ -5740,7 +5764,6 @@ def fit_line(wav,
                            'oiii_peak_ratio',
                            'oiii_5007_narrow_z',
                            'oiii_5007_full_peak_z',
-                           'hb_centroid',
                            'hb_snr', 
                            'hb_z',
                            'redchi']
@@ -5841,7 +5864,6 @@ def fit_line(wav,
                            'oiii_peak_ratio':np.nan,
                            'oiii_5007_narrow_z':np.nan,
                            'oiii_5007_full_peak_z':np.nan,
-                           'hb_centroid':np.nan,
                            'hb_snr':np.nan,
                            'hb_z':np.nan,
                            'redchi':np.nan}
@@ -6318,7 +6340,8 @@ def fit_line(wav,
                          w0 = w0, 
                          maskout = maskout, 
                          continuum_region = continuum_region,
-                         show_continuum_fit = show_continuum_fit)
+                         show_continuum_fit = show_continuum_fit,
+                         save_dir=save_dir)
     
         if parallel:
             
