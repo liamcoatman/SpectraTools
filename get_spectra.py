@@ -12,6 +12,7 @@ import warnings
 from astropy.utils.exceptions import AstropyWarning
 from astropy.io import fits
 from get_wavelength import get_wavelength
+import os 
 
 def get_sdss_dr7_spec(name):
 
@@ -67,76 +68,56 @@ def get_boss_dr12_spec(name):
     Given DR12 name will return spectrum
     """
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', AstropyWarning)
-        dr12cat = Table.read('/data/lc585/SDSS/DR12Q.fits')
+    t = Table.read('/data/vault/phewett/ICAtest/DR12exp/Spectra/boss_dr12_name_file.lis', 
+                  format='ascii', 
+                  names=['name', 'loc'])
 
+    if name[:5] != 'SDSSJ':
+        name = 'SDSSJ' + name
 
-    if name[:5] == 'SDSSJ':
-        name = name.replace('SDSSJ','')
+    hdulist = fits.open(t[t['name'] == name]['loc'].data[0]) 
 
-    i = np.where(dr12cat['SDSS_NAME'] == name)[0]
-
-    if len(i) != 0:
-
-        plate = dr12cat[i]['PLATE'].data[0]
-        fiber = dr12cat[i]['FIBERID'].data[0]
-        mjd = dr12cat[i]['MJD'].data[0]
-
-        url = 'http://api.sdss3.org/spectrum?plate={0}&fiber={1:04d}&mjd={2}'.format(plate, fiber, mjd)
-
-        # url = '/data/lc585/WHT_20150331/DR12_Spectra/SDSSJ132948.73+324124.4.fits'
-
-        hdulist = fits.open(url)
-        data = hdulist[1].data
-        hdr = hdulist[0].header
-        hdulist.close()
-
-        wavelength = 10**np.array([j[1] for j in data ])
-        dw = wavelength * (10**hdr['COEFF1'] - 1.0 )
-        flux = np.array([j[0] for j in data ])
-        err = np.sqrt( np.array([j[6] for j in data ])) # square root of sky
-
-
-        return wavelength, dw, flux, err
-
-    else:
-        print 'No spectrum found'
-        return None, None, None, None
-
-def get_liris_spec(fname):
-
-    """
-    Give path to fits file and will return spectrum
-    Works for my Liris IRAF spectra, might work for other fits
-    """
-
-    hdulist = fits.open( fname )
+    data = hdulist[1].data
     hdr = hdulist[0].header
-    data = hdulist[0].data
     hdulist.close()
 
-    wavelength, dw = get_wavelength(hdr)
-    flux = data[0,:,:].flatten()
-    err = data[-1,:,:].flatten()
+    wavelength = 10**np.array([j[1] for j in data ])
+    dw = wavelength * (10**hdr['COEFF1'] - 1.0 )
+    flux = np.array([j[0] for j in data ])
+    err = np.sqrt( np.array([j[6] for j in data ])) # square root of sky
+
 
     return wavelength, dw, flux, err
 
+   
+def read_boss_dr12_spec(f):
 
-def get_sofi_spec(fname):
 
     """
-    Give path to fits file and will return spectrum
-    Works for sofi_reduce spectra 
+    Given DR12 name will return spectrum
     """
 
-    hdulist = fits.open(fname)
+   
+
+    hdulist = fits.open(f) 
+
+    data = hdulist[1].data
+    hdr = hdulist[0].header
+    hdulist.close()
+
+    wavelength = 10**np.array([j[1] for j in data ])
+    dw = wavelength * (10**hdr['COEFF1'] - 1.0 )
+    flux = np.array([j[0] for j in data ])
+    err = np.sqrt( np.array([j[6] for j in data ])) # square root of sky
+
+
+    return wavelength, dw, flux, err
+
+if __name__ == '__main__':
     
-    flux = hdulist[0].data.flatten()
-    wavelength = hdulist[2].data.flatten()
-    err = hdulist[1].data.flatten() # i'm not sure if this is sigma or variance. 
-    dw = np.diff(wavelength)
+    wavelength, dw, flux, err = get_boss_dr12_spec('000000.66+145828.8')  
 
-    hdulist.close()
-
-    return wavelength, dw, flux, err
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots() 
+    ax.plot(wavelength, flux)
+    plt.show()

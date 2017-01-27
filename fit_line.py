@@ -3732,8 +3732,7 @@ def get_stats_oiii(out,
     mod_oiii_5007_pars['oiii_5007_n_center'].value = out.params['oiii_5007_n_center'].value
 
     integrand = lambda x: mod_oiii_5007.eval(params=mod_oiii_5007_pars, x=np.array(x) + wave2doppler(5008.239*u.AA, w0).value) 
-
-    
+   
 
     dv = 1.0 
     xs = np.arange(-10000.0, 10000.0, dv) / xscale 
@@ -3973,6 +3972,7 @@ def get_stats_oiii(out,
                'oiii_peak_ratio':out.params['oiii_peak_ratio'].value, 
                'oiii_5007_narrow_z':oiii_narrow_z,
                'oiii_5007_full_peak_z':oiii_full_peak_z,
+               'oiii_5007_full_peak_vel':oiii_peak,
                'hb_snr':snr_hb, 
                'hb_z':hb_z,
                'redchi':out.redchi}
@@ -5545,6 +5545,29 @@ def fit5(obj,
 
         print colored(out.redchi, 'red')
 
+        print  fit_out['name'] + ',',\
+               format(fit_out['w1'], '.5f') + ',' if ~np.isnan(fit_out['w1']) else ',',\
+               format(fit_out['w2'], '.5f') + ',' if ~np.isnan(fit_out['w2']) else ',',\
+               format(fit_out['w3'], '.5f') + ',' if ~np.isnan(fit_out['w3']) else ',',\
+               format(fit_out['w4'], '.5f') + ',' if ~np.isnan(fit_out['w4']) else ',',\
+               format(fit_out['w5'], '.5f') + ',' if ~np.isnan(fit_out['w5']) else ',',\
+               format(fit_out['w6'], '.5f') + ',' if ~np.isnan(fit_out['w6']) else ',',\
+               format(fit_out['w7'], '.5f') + ',' if ~np.isnan(fit_out['w7']) else ',',\
+               format(fit_out['w8'], '.5f') + ',' if ~np.isnan(fit_out['w8']) else ',',\
+               format(fit_out['w9'], '.5f') + ',' if ~np.isnan(fit_out['w9']) else ',',\
+               format(fit_out['w10'], '.5f') + ',' if ~np.isnan(fit_out['w10']) else ',',\
+               format(fit_out['shift'], '.1f') + ',' if ~np.isnan(fit_out['shift']) else ',',\
+               format(fit_out['mfica_oiii_v05'], '.1f') + ',' if ~np.isnan(fit_out['mfica_oiii_v05']) else ',',\
+               format(fit_out['mfica_oiii_v10'], '.1f') + ',' if ~np.isnan(fit_out['mfica_oiii_v10']) else ',',\
+               format(fit_out['mfica_oiii_v25'], '.1f') + ',' if ~np.isnan(fit_out['mfica_oiii_v25']) else ',',\
+               format(fit_out['mfica_oiii_v50'], '.1f') + ',' if ~np.isnan(fit_out['mfica_oiii_v50']) else ',',\
+               format(fit_out['mfica_oiii_v75'], '.1f') + ',' if ~np.isnan(fit_out['mfica_oiii_v75']) else ',',\
+               format(fit_out['mfica_oiii_v90'], '.1f') + ',' if ~np.isnan(fit_out['mfica_oiii_v90']) else ',',\
+               format(fit_out['mfica_oiii_v95'], '.1f') + ',' if ~np.isnan(fit_out['mfica_oiii_v95']) else ',',\
+               format(fit_out['z_ica'], '.5f') if ~np.isnan(fit_out['z_ica']) else ''
+
+
+
     if save_dir is not None:
 
         fittxt = ''    
@@ -5620,7 +5643,8 @@ def fit_line(wav,
              fix_oiii_peak_ratio = True,
              show_continuum_fit = True,
              load_fit = False,
-             debug=False):
+             debug=False,
+             append_errors=False):
 
 
     """
@@ -5764,6 +5788,7 @@ def fit_line(wav,
                            'oiii_peak_ratio',
                            'oiii_5007_narrow_z',
                            'oiii_5007_full_peak_z',
+                           'oiii_5007_full_peak_vel',
                            'hb_snr', 
                            'hb_z',
                            'redchi']
@@ -5864,7 +5889,9 @@ def fit_line(wav,
                            'oiii_peak_ratio':np.nan,
                            'oiii_5007_narrow_z':np.nan,
                            'oiii_5007_full_peak_z':np.nan,
+                           'oiii_5007_full_peak_vel':np.nan,
                            'hb_snr':np.nan,
+                           'snr':np.nan, # in continuum 
                            'hb_z':np.nan,
                            'redchi':np.nan}
 
@@ -5937,7 +5964,11 @@ def fit_line(wav,
         else:
 
             if save_dir is not None:
-                df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+                if append_errors:
+                    with open(os.path.join(save_dir, 'fit_errors.txt'), 'a') as f: 
+                        df_out.to_csv(f, header=False, index=False)
+                else:
+                    df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
 
             return None 
 
@@ -5962,6 +5993,7 @@ def fit_line(wav,
                                                          err_norebin_tmp,
                                                          size=(n_samples, n_elements_norebin)),
                                 dtype=np.float32)
+
 
 
     else: 
@@ -6262,8 +6294,14 @@ def fit_line(wav,
         
             else:
     
+
                 if save_dir is not None:
-                    df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+                    
+                    if append_errors:
+                        with open(os.path.join(save_dir, 'fit_errors.txt'), 'a') as f: 
+                            df_out.to_csv(f, header=False, index=False)
+                    else:
+                        df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
         
                 return None 
 
@@ -6274,26 +6312,27 @@ def fit_line(wav,
         """
        
        
-        mask = (err_array_blue_norebin < 0.0) | np.isnan(flux_array_blue_norebin)
+        mask_blue = (err_array_blue_norebin < 0.0) | np.isnan(flux_array_blue_norebin)
+        mask_red = (err_array_red_norebin < 0.0) | np.isnan(flux_array_red_norebin)
         
-        wa = ma.masked_where(mask, wav_array_blue_norebin)
-        fl = ma.masked_where(mask, flux_array_blue_norebin)
-        er = ma.masked_where(mask, err_array_blue_norebin)
-        
-        snr_blue = ma.median(fl, axis=1) / ma.std(fl, axis=1)
-        
-        mask = (err_array_red_norebin < 0.0) | np.isnan(flux_array_red_norebin)
-        
-        wa = ma.masked_where(mask, wav_array_red_norebin)
-        fl = ma.masked_where(mask, flux_array_red_norebin)
-        er = ma.masked_where(mask, err_array_red_norebin)
-        
-        snr_red = ma.median(fl, axis=1) / ma.std(fl, axis=1)
+        wa = np.concatenate((ma.masked_where(mask_blue, wav_array_blue_norebin),
+                             ma.masked_where(mask_red, wav_array_red_norebin)),
+                            axis=1)
 
-        snr = np.mean([snr_blue, snr_red], axis=0)
-      
-        # snr = ma.median(fl / er, axis=1)
+        fl = np.concatenate((ma.masked_where(mask_blue, flux_array_blue_norebin),
+                             ma.masked_where(mask_red, flux_array_red_norebin)),
+                            axis=1)
 
+        er = np.concatenate((ma.masked_where(mask_blue, err_array_blue_norebin),
+                             ma.masked_where(mask_red, err_array_red_norebin)),
+                            axis=1)
+
+        
+        # snr_blue = ma.median(fl, axis=1) / ma.std(fl, axis=1)
+        # snr_red = ma.median(fl, axis=1) / ma.std(fl, axis=1)
+
+        snr = np.nanmedian(fl / er, axis=1)
+        # print snr
 
         # 33.02 is the A per resolution element I measured from the Arc spectrum for Liris 
         if verbose:
@@ -6301,7 +6340,11 @@ def fit_line(wav,
             # print 'S/N per resolution element in continuum: {0:.2f}'.format(np.median( np.sqrt(33.02 / np.diff(wa) ) * fl[:-1] / er[:-1] )) 
                 print 'S/N per pixel in continuum: {0:.2f}'.format(snr[0]) 
 
-   
+
+
+        # fig, ax = plt.subplots() 
+        # ax.hist(fl.flatten() / er.flatten(), bins=np.arange(-20, 50, 1))
+        # plt.show() 
         
     #-------------------------------------------------------------------------------------
 
@@ -6407,8 +6450,14 @@ def fit_line(wav,
                 for col in df_out:
                     df_out.loc[k, col] = out[k][col]
         
-          
-            df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+            if append_errors:
+                
+                with open(os.path.join(save_dir, 'fit_errors.txt'), 'a') as f: 
+                    df_out.to_csv(f, header=False, index=False)
+            
+            else:
+                df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+
              
         else:
         
@@ -6725,8 +6774,12 @@ def fit_line(wav,
             for col in df_out:
                 df_out.loc[k, col] = out[k][col]
     
-      
-        df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+        if append_errors:
+            with open(os.path.join(save_dir, 'fit_errors.txt'), 'a') as f: 
+                df_out.to_csv(f, header=False, index=False)
+        else:
+            df_out.to_csv(os.path.join(save_dir, 'fit_errors.txt'), index=False) 
+
          
     else:
     
