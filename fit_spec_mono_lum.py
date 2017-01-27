@@ -6,7 +6,6 @@ Created on Sat Aug  1 14:13:56 2015
 
 Get monochromatic luminosity from spectra 
 
-I'm just using a simple median, but check with Paul whether I should do power-law fit
 
 """
 from __future__ import division
