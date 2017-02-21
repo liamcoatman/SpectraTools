@@ -5,109 +5,111 @@ Created on Sat Aug  1 14:49:50 2015
 @author: lc585
 
 Make composite spectra
-Specific only for LIRIS
 
 """
 
-from scipy.interpolate import interp1d
-from astropy.table import Table
-from get_spectra import get_liris_spec
-from flux_calibrate import flux_calibrate
-import numpy as np
-import os
-import matplotlib.pyplot as plt
-import astropy.units as u
-from fit_line import fit_line
+import numpy as np 
+from scipy.interpolate import interp1d 
+import matplotlib.pyplot as plt 
 
-def MakeComposite():
+def make_composite(wav_new,
+                   wav_array, 
+                   flux_array, 
+                   z_array,
+                   names=None,
+                   verbose=True):
 
-    fname = '/home/lc585/Dropbox/IoA/BlackHoleMasses/lineinfo_v4.dat'
-    t = Table.read(fname,
-                   format='ascii',
-                   guess=False,
-                   delimiter=',')
+    # if verbose:
+    #     plt.ion() 
+    #     sns.set_style() 
+    #     fig, ax = plt.subplots() 
+    #     ax.set_xlim(4435.0, 5535.0)
+    #     ax.set_ylim(0, 50)
 
+    nspec = len(z_array)
 
-    spec, err2 = [], []
-    for n, z, m in zip(t['Name'], t['z_ICA'], t['Median_Ha']):
+    # Order by redshift 
+    inds = np.argsort(z_array)
 
-        fname = os.path.join('/data/lc585/WHT_20150331/html',n,'dimcombLR+bkgd_v138.ms.fits')
-        wavelength, dw, flux, err = get_liris_spec(fname)
+    wav_array = wav_array[inds]
+    flux_array = flux_array[inds]
+    z_array = z_array[inds]
 
-        with open('/home/lc585/Dropbox/IoA/QSOSED/Model/Filter_Response/H.response','r') as f:
-            ftrwav, ftrtrans = np.loadtxt(f,unpack=True)
+    new_flux_array = np.zeros((nspec, len(wav_new)))
+        
+    for i in range(nspec):     
+    
+        # First shift to rest-frame  
+        wav = wav_array[i] / (1.0 + z_array[i])    
+    
+        # Interpolate 
+        # I don't think this conserves flux 
+        f = interp1d(wav, flux_array[i], bounds_error=False, fill_value=np.nan) # combine with np.nanmedian()
+        
+        new_flux_array[i, :] = f(wav_new)
+    
+    
+    # Arbitarily scale first spectrum 
+    new_flux_array[0, :] = 1000.0 * new_flux_array[0, :] / np.nansum(new_flux_array[0, :])
+    
+    # if verbose:
+    #     line1, = ax.plot(wav_new, new_flux_array[0, :], zorder=1)
+    #     line2, = ax.plot(wav_new, new_flux_array[0, :], alpha=0.5, zorder=2)
 
-        flux, err = flux_calibrate(wavlen=wavelength, flux=flux, flux_sigma=err, ftrwav=ftrwav, ftrtrans=ftrtrans, mag=18.0)
+    # Then scale in order of 
+    # redshift to the average of the flux density in the common
+    # wavelength region of the mean spectrum of all the lower
+    # redshift spectra. 
+    # using the method described by Vanden Berk et al. (2001)
 
-        # Transform to quasar rest-frame
-        wavelength = wavelength / (1.0 + z)
-        from astropy.constants import c
-        wavelength = wavelength * (1.0 - m*(u.km/u.s) / c.to(u.km/u.s))
+    # for i in range(1, nspec):
 
-        f1 = interp1d( wavelength, flux, bounds_error=False, fill_value=np.nan )
-        f2 = interp1d( wavelength, err**2, bounds_error=False, fill_value=np.nan )
+    
+    #     # Calculate overlap region 
+    #     overlap = ~np.isnan(new_flux_array[0, :]) 
+    #     j = 1
+    #     while j <= i: 
+    #         overlap = overlap & ~np.isnan(new_flux_array[j, :])
+    #         j += 1 
+    
+    #     # Mean spectrum of all lower redshift spectrum  
+    #     meanspec = np.nanmean(new_flux_array[:i, overlap], axis=0)
+        
+    #     # Scale to average flux density in mean spectrum 
+    #     new_flux_array[i, :] = new_flux_array[i, :] * np.nanmedian(meanspec) / np.nanmedian(new_flux_array[i, :])
+    
 
+    #     if verbose:
+    #         line1.set_ydata(np.nanmedian(new_flux_array[:i, :], axis=0))
+    #         line2.set_ydata(new_flux_array[i, :])
+    #         fig.canvas.draw()
+    #         plt.pause(2)
 
-        spec.append( f1( np.linspace(4000.0,7600.0,1168) ) )
-        err2.append( f2( np.linspace(4000.0,7600.0,1168) ) )
+    
 
-    spec = np.array(spec)
-    err2 = np.array(err2)
+    new_flux_array = new_flux_array / np.nanmedian(new_flux_array, axis=1)[:, np.newaxis]
 
-    meanspec, ns = np.zeros(1168), np.zeros(1168)
+   
 
-    for i in range(1168):
-        for j in range(len(t)):
-            if ~( np.isnan(spec[j,i]) | np.isnan(err2[j,i]) ):
-                ns[i] += 1.0
-                meanspec[i] += spec[j,i] / err2[j,i]
+    # Now caluclate uncertainties: 
+    # dividing the 68% semi-interquantile range 
+    # of the flux densities by the square root 
+    # of the number of spectra contributing to each bin.
+    
+    flux = np.nanmedian(new_flux_array, axis=0)
 
-    return np.linspace(4000.0,7600.0,1168), meanspec / ns / 1e18
+    ns = np.sum(~np.isnan(new_flux_array), axis=0)
+    
+    q84, q16 = np.nanpercentile(new_flux_array, [84, 16], axis=0)
+    
+    err = 0.5*(q84 - q16) / np.sqrt(ns) 
 
+    if verbose: 
+        fig, ax = plt.subplots()
+        for row in new_flux_array:
+            ax.plot(wav_new, row, lw=1, color='grey', alpha=0.1)
+        ax.plot(wav_new, flux)
+        plt.show() 
 
+    return wav_new, flux, err, ns 
 
-w, f = MakeComposite()
-fig, ax = plt.subplots()
-ax.plot(w, f)
-# err = np.repeat(0.05,len(f))
-
-# fit_line(w,
-#          f,
-#          err,
-#          z=0.0,
-#          w0=6564.89*u.AA,
-#          continuum_region=[[6000.,6250.]*u.AA,[6800.,7000.]*u.AA],
-#          fitting_region=[6400,6800]*u.AA,
-#          plot_region=[6000,7000]*u.AA,
-#          nGaussians=0,
-#          nLorentzians=2,
-#          maskout=None,
-#          verbose=True,
-#          plot=True)
-
-#Peak: -74.326125
-#FWHM: 2338.39064098
-#Median: -107.0
-#EQW: 548.449953303 Angstrom
-
-#fit_line(w,
-#         f,
-#         err,
-#         z=0.0,
-#         w0=4862.68*u.AA,
-#         continuum_region=[[4550.,4700.]*u.AA,[5100.,5300.]*u.AA],
-#         fitting_region=[4700.,4900.0]*u.AA,
-#         plot_region=[4435,5535]*u.AA,
-#         nGaussians=0,
-#         nLorentzians=1,
-#         maskout=None,
-#         verbose=True,
-#         plot=True)
-
-#Peak: 206.9309375
-#FWHM: 2355.49451771
-#Median: 208.0
-#EQW: 42.3820996054 Angstrom
-
-
-plt.show()

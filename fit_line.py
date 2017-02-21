@@ -3955,6 +3955,28 @@ def get_stats_oiii(out,
 
     #------------------------------------------------------------------------
 
+    """
+    Calculate offset between broad peaks in Hb
+    If we have three gaussians this won't be correct
+    """
+
+    broad_fwhms = np.zeros(nGaussians)
+    broad_cens = np.zeros(nGaussians)
+
+    for i in range(nGaussians):   
+        broad_fwhms[i] = np.array(out.params['hb_b_{}_fwhm'.format(i)].value)
+        broad_cens[i] = np.array(out.params['hb_b_{}_center'.format(i)].value)
+
+    broad_cens = broad_cens[np.argsort(broad_fwhms)[::-1]]
+
+    if len(broad_fwhms) == 1:
+        broad_cens = np.append(broad_cens, np.nan)
+
+    broad_offset = broad_cens[0] - broad_cens[1] 
+
+
+    # ----------------------------------------------------------------------
+
 
     
     fit_out = {'name':plot_title,
@@ -3975,6 +3997,7 @@ def get_stats_oiii(out,
                'oiii_5007_full_peak_vel':oiii_peak,
                'hb_snr':snr_hb, 
                'hb_z':hb_z,
+               'hb_broad_offset':broad_offset,
                'redchi':out.redchi}
 
     return fit_out 
@@ -4665,7 +4688,9 @@ def fit3(obj,
          oiii_broad_off,
          oiii_template,
          fix_oiii_peak_ratio,
-         load_fit):
+         load_fit,
+         xout,
+         yout):
 
 
     k = obj[0]
@@ -4680,6 +4705,10 @@ def fit3(obj,
     mono_lum_k = obj[9]
     eqw_fe_k = obj[10]
     snr_k = obj[11]
+
+
+                                                                      
+
 
     if subtract_fe is True:
 
@@ -4929,6 +4958,7 @@ def fit3(obj,
             parfile.close()    
     
             if subtract_fe is True:
+
                 flux_dump = flux - resid(params=bkgdpars_k, 
                                          x=wav.value, 
                                          model=bkgdmod,
@@ -4969,6 +4999,25 @@ def fit3(obj,
     
             with open(os.path.join(save_dir, 'fit.txt'), 'w') as f:
                 f.write(fittxt) 
+
+
+            # Write out only continuum and fitting regions with masked applied 
+
+            if subtract_fe is True:
+                
+                yout_dump = yout - resid(params=bkgdpars_k, 
+                                         x=xout, 
+                                         model=bkgdmod,
+                                         sp_fe=sp_fe)
+            
+            if subtract_fe is False:
+
+                yout_dump = yout - resid(params=bkgdpars_k, 
+                                         x=xout, 
+                                         model=bkgdmod)
+
+            np.savetxt(os.path.join(save_dir, 'spec_cont_sub.txt'), np.transpose([xout, yout_dump]))
+
 
     # Calculate stats 
 
@@ -5509,7 +5558,6 @@ def fit5(obj,
                    options={'maxiter':1e4, 'maxfev':1e4} 
                    ) 
 
-
     fit_out = {'name':plot_title,
                'w1': out.params['w1'].value,
                'w2': out.params['w2'].value,
@@ -5521,7 +5569,8 @@ def fit5(obj,
                'w8': out.params['w8'].value,
                'w9': out.params['w9'].value,
                'w10': out.params['w10'].value,
-               'shift':out.params['shift'].value}
+               'shift':out.params['shift'].value,
+               'redchi':out.redchi}
     
     fit_out = dict(oiii_reconstruction(fit_out).items() + fit_out.items())
 
@@ -5770,7 +5819,8 @@ def fit_line(wav,
                            'mfica_oiii_v75',
                            'mfica_oiii_v90',
                            'mfica_oiii_v95',
-                           'z_ica']
+                           'z_ica',
+                           'redchi']
 
             if emission_line == 'OIII':
 
@@ -5791,6 +5841,7 @@ def fit_line(wav,
                            'oiii_5007_full_peak_vel',
                            'hb_snr', 
                            'hb_z',
+                           'hb_broad_offset',
                            'redchi']
                               
 
@@ -5870,7 +5921,8 @@ def fit_line(wav,
                            'mfica_oiii_v90':np.nan,
                            'mfica_oiii_v95':np.nan,
                            'shift':np.nan,
-                           'z_ica':np.nan}
+                           'z_ica':np.nan,
+                           'redchi':np.nan}
 
             elif emission_line == 'OIII':
 
@@ -5893,6 +5945,7 @@ def fit_line(wav,
                            'hb_snr':np.nan,
                            'snr':np.nan, # in continuum 
                            'hb_z':np.nan,
+                           'hb_broad_offset':np.nan,
                            'redchi':np.nan}
 
             else: 
@@ -6177,7 +6230,6 @@ def fit_line(wav,
     wav_array_fit = ma.masked_where(mask, wav_array)
     err_array_fit = ma.masked_where(mask, err_array)
     vdat_array_fit = ma.masked_where(mask, vdat_array)
-
     
     blue_mask = (ma.getdata(wav_array).value < continuum_region[0][0].value) | (ma.getdata(wav_array).value > continuum_region[0][1].value)
     red_mask = (ma.getdata(wav_array).value < continuum_region[1][0].value) | (ma.getdata(wav_array).value > continuum_region[1][1].value)   
@@ -6192,6 +6244,18 @@ def fit_line(wav,
     err_array_red = ma.masked_where(red_mask, err_array)
     vdat_array_red = ma.masked_where(red_mask, vdat_array)
 
+    # ---------------------------------------------------------
+
+    # Write these out for the purposes of making a composite spectra 
+
+    if (n_samples == 1) & (save_dir is not None): 
+
+        xout = np.asarray(wav_array[~mask]).flatten() 
+        yout = np.asarray(flux_array[~mask]).flatten() 
+
+    else:
+
+        xout, yout = None, None 
 
     #------------------------------------------------------------------------------------------------------------------------------
 
@@ -6754,7 +6818,9 @@ def fit_line(wav,
                      oiii_broad_off = oiii_broad_off,
                      oiii_template = oiii_template,
                      fix_oiii_peak_ratio = fix_oiii_peak_ratio,
-                     load_fit = load_fit)
+                     load_fit = load_fit,
+                     xout=xout,
+                     yout=yout)
     
     if parallel:
         
