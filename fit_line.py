@@ -40,6 +40,7 @@ from copy import deepcopy
 import warnings
 import matplotlib
 import palettable 
+import ipdb
 warnings.simplefilter(action = "ignore", category = FutureWarning) # I get "elementwise comparison failed" during plotting, but doesn't seem important
 # warnings.simplefilter(action = "error", category = RuntimeWarning)
 np.set_printoptions(threshold='nan')
@@ -922,16 +923,18 @@ def plot_fit(wav=None,
 
     fs = fig.add_subplot(5,1,5)
 
-    fit.scatter(vdat.value, ydat, edgecolor='None', s=5, facecolor='black')
+    fit.scatter(vdat.value, 
+                ydat, 
+                edgecolor='None', 
+                s=5, 
+                facecolor='black')
+
     fit.errorbar(vdat.value, 
                  ydat, 
                  yerr=yerr, 
                  linestyle='', 
                  alpha=0.2, 
                  color='grey')
-
-
-
 
     # Mark continuum fitting region
     # Doesn't make sense to transform to wave and then back to velocity but I'm being lazy.
@@ -2138,6 +2141,7 @@ def plot_continum(xdat_cont,
 
     return None 
 
+
 def mfica_model(weights, comps, comps_wav, x):
 
     fl = weights['w1'].value * comps[:, 0]
@@ -2145,25 +2149,23 @@ def mfica_model(weights, comps, comps_wav, x):
     for i in range(comps.shape[1] - 1):
         fl += weights['w{}'.format(i+2)].value * comps[:, i+1]
 
-    # because otherwise tiny shifts don't do anything to the chi-squared
-    shift = weights['shift'].value * 10.0 
 
-    f = interp1d(comps_wav + shift, 
+    f = interp1d(np.log10(comps_wav) + weights['shift'].value, 
                  fl, 
                  bounds_error=False, 
                  fill_value=0.0)
 
 
-    return f(x)
+    return f(np.log10(x))
 
 def mfica_get_comp(i, weights, comps, comps_wav, x):
 
-    f = interp1d(comps_wav + weights['shift'].value, 
+    f = interp1d(np.log10(comps_wav) + weights['shift'].value, 
                  weights['w{}'.format(i)].value * comps[:, i-1], 
                  bounds_error=False, 
                  fill_value=np.nan)
 
-    return f(x)
+    return f(np.log10(x))
 
   
 def mfica_resid(weights=None, 
@@ -2773,7 +2775,7 @@ def make_model_mfica(mfica_n_weights=10):
     weights.add('w9', value=0.0)
     weights.add('w10', value=0.0)
 
-    weights.add('shift', value=-0.1)
+    weights.add('shift', value=0.0)
 
     if mfica_n_weights == 8:
 
@@ -3241,7 +3243,8 @@ def make_model_oiii(xscale=1.0,
                     fix_broad_peaks=True,
                     oiii_broad_off=False,
                     oiii_template=False,
-                    fix_oiii_peak_ratio=True):
+                    fix_oiii_peak_ratio=True,
+                    oiii_template_version='lowz'):
 
 
     """
@@ -3412,27 +3415,64 @@ def make_model_oiii(xscale=1.0,
         """
         For low S/N use low-z SDSS composite 
         /data/lc585/nearIR_spectra/linefits/SDSSComposite/my_params.txt
+
+        Now have fit high-z composite
+        /data/lc585/nearIR_spectra/linefits/full_composite/my_params.txt
+
         """
+        
+        if oiii_template_version == 'lowz':
+
+            oiii_5007_n_sigma = 167.69
+            oiii_5007_b_sigma = 510.53
+            oiii_4959_n_sigma = 167.69
+            oiii_4959_b_sigma = 510.53
+            hb_n_sigma = 167.69
+            oiii_5007_n_amplitude = 233.24
+            oiii_5007_b_amplitude = 236.18
+            oiii_4959_n_amplitude = 77.74
+            oiii_4959_b_amplitude = 78.72
+            hb_n_amplitude = 53.24
+            oiii_5007_b_center_delta = 200.416
+
+        elif oiii_template_version == 'highz':
+
+            oiii_5007_n_sigma = 273.007623
+            oiii_5007_b_sigma = 693.204775
+            oiii_4959_n_sigma = 273.007623
+            oiii_4959_b_sigma = 693.204775
+            hb_n_sigma = 531.527802
+            oiii_5007_n_amplitude = 1714.49974
+            oiii_5007_b_amplitude = 2921.65210
+            oiii_4959_n_amplitude = 571.442766
+            oiii_4959_b_amplitude = 973.786646
+            hb_n_amplitude = 1137.83723
+            oiii_5007_b_center_delta = 320.074618
 
 
-        pars['oiii_5007_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
-        pars['oiii_5007_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
-        pars['oiii_4959_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
-        pars['oiii_4959_b_sigma'].set(value=510.53, vary=False, min=None, max=None, expr=None)
+        else:
+
+            raise ValueError('{0} is not a valid oiii_template version'.format(oiii_template_version))
+
+
+        pars['oiii_5007_n_sigma'].set(value=oiii_5007_n_sigma, vary=False, min=None, max=None, expr=None)
+        pars['oiii_5007_b_sigma'].set(value=oiii_5007_b_sigma, vary=False, min=None, max=None, expr=None)
+        pars['oiii_4959_n_sigma'].set(value=oiii_4959_n_sigma, vary=False, min=None, max=None, expr=None)
+        pars['oiii_4959_b_sigma'].set(value=oiii_4959_b_sigma, vary=False, min=None, max=None, expr=None)
         
         if hb_narrow is True and altfit is not True:
-            pars['hb_n_sigma'].set(value=167.69, vary=False, min=None, max=None, expr=None)
+            pars['hb_n_sigma'].set(value=hb_n_sigma, vary=False, min=None, max=None, expr=None)
         
         pars.add('oiii_scale') 
         pars['oiii_scale'].value = 1.0 
         pars['oiii_scale'].min = 0.0 
 
-        pars['oiii_5007_n_amplitude'].set(value=233.24, vary=False, expr='oiii_scale*233.24', min=None, max=None)
-        pars['oiii_5007_b_amplitude'].set(value=236.18, vary=False, expr='oiii_scale*236.18', min=None, max=None)
-        pars['oiii_4959_n_amplitude'].set(value=77.74, vary=False, expr='oiii_scale*77.74', min=None, max=None)
-        pars['oiii_4959_b_amplitude'].set(value=78.72, vary=False, expr='oiii_scale*78.72', min=None, max=None)
+        pars['oiii_5007_n_amplitude'].set(value=oiii_5007_n_amplitude, vary=False, expr='oiii_scale*233.24', min=None, max=None)
+        pars['oiii_5007_b_amplitude'].set(value=oiii_5007_b_amplitude, vary=False, expr='oiii_scale*236.18', min=None, max=None)
+        pars['oiii_4959_n_amplitude'].set(value=oiii_4959_n_amplitude, vary=False, expr='oiii_scale*77.74', min=None, max=None)
+        pars['oiii_4959_b_amplitude'].set(value=oiii_4959_b_amplitude, vary=False, expr='oiii_scale*78.72', min=None, max=None)
         if hb_narrow is True and altfit is not True:
-            pars['hb_n_amplitude'].set(value=53.24, vary=False, expr='oiii_scale*53.24', min=None, max=None)
+            pars['hb_n_amplitude'].set(value=hb_n_amplitude, vary=False, expr='oiii_scale*53.24', min=None, max=None)
 
  
         pars.add('oiii_n_center_delta')
@@ -3455,7 +3495,7 @@ def make_model_oiii(xscale=1.0,
             pars['hb_n_center'].set(value=0.0, vary=True, min=None, max=None, expr='oiii_n_center_delta')
 
         pars.add('oiii_5007_b_center_delta') 
-        pars['oiii_5007_b_center_delta'].set(value=200.416080, vary=False, min=None, max=None, expr=None)
+        pars['oiii_5007_b_center_delta'].set(value=oiii_5007_b_center_delta, vary=False, min=None, max=None, expr=None)
         pars['oiii_5007_b_center'].set(expr='oiii_5007_n_center-oiii_5007_b_center_delta')
         pars['oiii_4959_b_center'].set(expr='oiii_4959_n_center-oiii_5007_b_center_delta')
 
@@ -3615,10 +3655,16 @@ def get_eqw(vl,
             subtract_fe=False):
 
     xs_wav = doppler2wave(vl*(u.km/u.s), w0)
-    
+
     if subtract_fe is True:
 
-        flux_bkgd = resid(params=bkgdpars_k, 
+       
+        # I don't think OIII EQW should be relative to Fe
+        # so set this to zero 
+        pars_tmp = bkgdpars_k.copy() 
+        pars_tmp['fe_norm'].value = 0.0 
+
+        flux_bkgd = resid(params=pars_tmp, 
                           x=xs_wav.value, 
                           model=bkgdmod,
                           sp_fe=sp_fe)
@@ -3998,6 +4044,7 @@ def get_stats_oiii(out,
                'hb_snr':snr_hb, 
                'hb_z':hb_z,
                'hb_broad_offset':broad_offset,
+               'hb_full_peak_vel':peak,
                'redchi':out.redchi}
 
     return fit_out 
@@ -4690,7 +4737,8 @@ def fit3(obj,
          fix_oiii_peak_ratio,
          load_fit,
          xout,
-         yout):
+         yout,
+         oiii_template_version):
 
 
     k = obj[0]
@@ -4845,7 +4893,8 @@ def fit3(obj,
                                     fix_broad_peaks=fix_broad_peaks,
                                     oiii_broad_off=oiii_broad_off,
                                     oiii_template=oiii_template,
-                                    fix_oiii_peak_ratio=fix_oiii_peak_ratio)        
+                                    fix_oiii_peak_ratio=fix_oiii_peak_ratio,
+                                    oiii_template_version=oiii_template_version)        
     
 
     elif fit_model == 'siiv':
@@ -5044,6 +5093,24 @@ def fit3(obj,
                                  oiii_broad_off=oiii_broad_off,
                                  hb_narrow=hb_narrow)
 
+        fit_out_hb = get_stats_hb(out=out,
+                                  line_region=line_region,
+                                  xscale=xscale,
+                                  w0=w0,
+                                  bkgdmod=bkgdmod,
+                                  bkgdpars_k=bkgdpars_k,
+                                  subtract_fe=subtract_fe,
+                                  spec_norm=spec_norm,
+                                  sp_fe=sp_fe,
+                                  z=z,
+                                  mod=mod,
+                                  nGaussians=nGaussians,
+                                  plot_title=plot_title,
+                                  hb_narrow=hb_narrow)
+
+        
+        fit_out['hb_fwhm'] = fit_out_hb['fwhm']
+        fit_out['hb_eqw'] = fit_out_hb['eqw'] 
 
     elif fit_model == 'Hb':
 
@@ -5462,7 +5529,6 @@ def fit5(obj,
     y = obj[2]
     er = obj[3]
 
-
     out = minimize(mfica_resid,
                    weights,
                    kws={'comps':comps,
@@ -5474,10 +5540,10 @@ def fit5(obj,
                    options={'maxiter':1e4, 'maxfev':1e4} 
                    ) 
 
-
-    
+   
     chis = []
-    shifts = np.arange(-10, 11, dtype=float) / 10.0
+    dw = np.diff(np.log10(comps_wav)).mean()  
+    shifts = dw * np.arange(-10, 11, dtype=float) 
 
     for shift in shifts: 
 
@@ -5514,38 +5580,10 @@ def fit5(obj,
 
         chis.append(val.sum())
 
-        # fit_out = {'name':plot_title,
-        #             'w1': weights['w1'].value,
-        #             'w2': weights['w2'].value,
-        #             'w3': weights['w3'].value,
-        #             'w4': weights['w4'].value,
-        #             'w5': weights['w5'].value,
-        #             'w6': weights['w6'].value,
-        #             'w7': weights['w7'].value,
-        #             'w8': weights['w8'].value,
-        #             'w9': weights['w9'].value,
-        #             'w10': weights['w10'].value,
-        #             'shift':weights['shift'].value}
-
-        # plot_mfica_fit(mfica_n_weights=mfica_n_weights,
-        #                xi=x,
-        #                yi=y,
-        #                dyi=er,
-        #                out=fit_out,
-        #                comps=comps,
-        #                comps_wav=comps_wav,
-        #                verbose=verbose)
-
-
-
-
+   
     # now minimize again with new starting point for shift
-
     weights['shift'].value = shifts[np.argmin(np.array(chis))]
 
-    # fig, ax = plt.subplots() 
-    # ax.plot(shifts, chis)
-    # plt.show() 
 
     out = minimize(mfica_resid,
                    weights,
@@ -5577,7 +5615,12 @@ def fit5(obj,
     # seems weird that this depends on where to measure it
     # maybe this is why people normally use a log scale? 
 
-    fit_out['z_ica'] = ((5008.239 + (out.params['shift'].value * 10.0)) * (1.0 + z)) / 5008.239 - 1.0 
+    # this is how I used to calculate z_ica when I was doing doing the 
+    # fit in linear space 
+    # fit_out['z_ica'] = ((5008.239 + (out.params['shift'].value * 10.0)) * (1.0 + z)) / 5008.239 - 1.0 
+    
+    # dv = out.params['shift'].value * const.c.to(u.km/u.s)
+    fit_out['z_ica'] = z + out.params['shift'].value * (1.0 + z) 
 
    
     if verbose: 
@@ -5693,7 +5736,8 @@ def fit_line(wav,
              show_continuum_fit = True,
              load_fit = False,
              debug=False,
-             append_errors=False):
+             append_errors=False,
+             oiii_template_version='lowz'):
 
 
     """
@@ -5717,135 +5761,123 @@ def fit_line(wav,
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
 
-            if emission_line == 'Ha':
-
-                columns = ['fwhm', 
-                           'fwhm_1', 
-                           'fwhm_2', 
-                           'sigma', 
-                           'median', 
-                           'cen', 
-                           'eqw', 
-                           'broad_lum', 
-                           'peak', 
-                           'narrow_fwhm', 
-                           'narrow_lum', 
-                           'narrow_voff', 
-                           'peak_z',
-                           'broad_offset',
-                           'redchi', 
-                           'snr', 
-                           'monolum', 
-                           'fe_ew'] 
-                
-            if emission_line == 'Hb':
-
-                columns = ['fwhm', 
-                           'fwhm_1', 
-                           'fwhm_2', 
-                           'sigma', 
-                           'median', 
-                           'cen', 
-                           'eqw', 
-                           'broad_lum', 
-                           'peak', 
-                           'narrow_fwhm', 
-                           'narrow_lum', 
-                           'narrow_voff', 
-                           'oiii_5007_eqw', 
-                           'oiii_5007_lum', 
-                           'oiii_5007_n_lum', 
-                           'oiii_5007_b_lum', 
-                           'oiii_fwhm', 
-                           'oiii_n_fwhm', 
-                           'oiii_b_fwhm', 
-                           'oiii_5007_b_voff', 
-                           'oiii_5007_05_percentile', 
-                           'oiii_5007_025_percentile', 
-                           'oiii_5007_01_percentile', 
-                           'redchi', 
-                           'snr', 
-                           'monolum', 
-                           'fe_ew']
-                
-            if emission_line == 'CIV':
-
-                columns = ['fwhm', 
-                           'sigma', 
-                           'median', 
-                           'cen', 
-                           'eqw', 
-                           'broad_lum', 
-                           'peak', 
-                           'redchi', 
-                           'snr', 
-                           'monolum',
-                           'shape']
-
             if pseudo_continuum_fit:
 
                 columns = ['monolum', 
                            'fe_ew']
 
-            if emission_line == 'siiv':
+            else:
 
-                columns = ['fwhm', 
-                           'sigma', 
-                           'median', 
-                           'cen', 
-                           'eqw', 
-                           'broad_lum', 
-                           'peak', 
-                           'redchi', 
-                           'snr']
+                column_dict = {'Ha': ['fwhm', 
+                                      'fwhm_1', 
+                                      'fwhm_2', 
+                                      'sigma', 
+                                      'median', 
+                                      'cen', 
+                                      'eqw', 
+                                      'broad_lum', 
+                                      'peak', 
+                                      'narrow_fwhm', 
+                                      'narrow_lum', 
+                                      'narrow_voff', 
+                                      'peak_z', 
+                                      'broad_offset',
+                                      'redchi', 
+                                      'snr', 
+                                      'monolum', 
+                                      'fe_ew'], 
+                               'Hb': ['fwhm', 
+                                      'fwhm_1', 
+                                      'fwhm_2', 
+                                      'sigma', 
+                                      'median', 
+                                      'cen', 
+                                      'eqw', 
+                                      'broad_lum', 
+                                      'peak', 
+                                      'narrow_fwhm', 
+                                      'narrow_lum', 
+                                      'narrow_voff', 
+                                      'oiii_5007_eqw', 
+                                      'oiii_5007_lum', 
+                                      'oiii_5007_n_lum', 
+                                      'oiii_5007_b_lum', 
+                                      'oiii_fwhm', 
+                                      'oiii_n_fwhm', 
+                                      'oiii_b_fwhm', 
+                                      'oiii_5007_b_voff', 
+                                      'oiii_5007_05_percentile', 
+                                      'oiii_5007_025_percentile', 
+                                      'oiii_5007_01_percentile', 
+                                      'redchi', 
+                                      'snr', 
+                                      'monolum', 
+                                      'fe_ew'],
+                               'CIV': ['fwhm', 
+                                       'sigma', 
+                                       'median', 
+                                       'cen', 
+                                       'eqw', 
+                                       'broad_lum', 
+                                       'peak', 
+                                       'redchi', 
+                                       'snr', 
+                                       'monolum',
+                                       'shape'],
+                               'siiv':['fwhm', 
+                                       'sigma', 
+                                       'median', 
+                                       'cen', 
+                                       'eqw', 
+                                       'broad_lum', 
+                                       'peak', 
+                                       'redchi', 
+                                       'snr'],
+                               'MFICA': ['w1',
+                                         'w2',
+                                         'w3',
+                                         'w4',
+                                         'w5',
+                                         'w6',
+                                         'w7',
+                                         'w8',
+                                         'w9',
+                                         'w10',
+                                         'shift',
+                                         'mfica_oiii_v05',
+                                         'mfica_oiii_v10',
+                                         'mfica_oiii_v25',
+                                         'mfica_oiii_v50',
+                                         'mfica_oiii_v75',
+                                         'mfica_oiii_v90',
+                                         'mfica_oiii_v95',
+                                         'z_ica',
+                                         'redchi'],
+                               'OIII':['oiii_5007_v5', 
+                                       'oiii_5007_v10', 
+                                       'oiii_5007_v25', 
+                                       'oiii_5007_v50', 
+                                       'oiii_5007_v75', 
+                                       'oiii_5007_v90', 
+                                       'oiii_5007_v95',
+                                       'oiii_5007_eqw', 
+                                       'oiii_5007_lum',
+                                       'oiii_5007_snr',
+                                       'oiii_5007_fwhm',
+                                       'oiii_peak_ratio',
+                                       'oiii_5007_narrow_z',
+                                       'oiii_5007_full_peak_z',
+                                       'oiii_5007_full_peak_vel',
+                                       'hb_snr', 
+                                       'hb_z',
+                                       'hb_broad_offset',
+                                       'hb_full_peak_vel',
+                                       'fe_ew', 
+                                       'hb_fwhm',
+                                       'hb_eqw',
+                                       'redchi']}
 
-            if emission_line == 'MFICA':
-                
-                columns = ['w1',
-                           'w2',
-                           'w3',
-                           'w4',
-                           'w5',
-                           'w6',
-                           'w7',
-                           'w8',
-                           'w9',
-                           'w10',
-                           'shift',
-                           'mfica_oiii_v05',
-                           'mfica_oiii_v10',
-                           'mfica_oiii_v25',
-                           'mfica_oiii_v50',
-                           'mfica_oiii_v75',
-                           'mfica_oiii_v90',
-                           'mfica_oiii_v95',
-                           'z_ica',
-                           'redchi']
-
-            if emission_line == 'OIII':
-
-                columns = ['oiii_5007_v5', 
-                           'oiii_5007_v10', 
-                           'oiii_5007_v25', 
-                           'oiii_5007_v50', 
-                           'oiii_5007_v75', 
-                           'oiii_5007_v90', 
-                           'oiii_5007_v95',
-                           'oiii_5007_eqw', 
-                           'oiii_5007_lum',
-                           'oiii_5007_snr',
-                           'oiii_5007_fwhm',
-                           'oiii_peak_ratio',
-                           'oiii_5007_narrow_z',
-                           'oiii_5007_full_peak_z',
-                           'oiii_5007_full_peak_vel',
-                           'hb_snr', 
-                           'hb_z',
-                           'hb_broad_offset',
-                           'redchi']
-                              
-
-
+                columns = column_dict[emission_line]                
 
             index = np.arange(n_samples)
 
@@ -5878,6 +5910,7 @@ def fit_line(wav,
     flux = flux * spec_norm 
     err = err * spec_norm 
 
+
     # Rebin spectrum 
     wav_norebin = wav * 1.0
     flux_norebin = flux * 1.0
@@ -5892,6 +5925,8 @@ def fit_line(wav,
     # index of the region we want to fit
     if fitting_region.unit == (u.km/u.s):
         fitting_region = doppler2wave(fitting_region, w0)
+
+
 
     if len(wav[(wav > fitting_region[0]) & (wav < fitting_region[1])]) == 0:
        
@@ -5946,6 +5981,10 @@ def fit_line(wav,
                            'snr':np.nan, # in continuum 
                            'hb_z':np.nan,
                            'hb_broad_offset':np.nan,
+                           'hb_full_peak_vel':np.nan,
+                           'fe_ew':np.nan,
+                           'hb_fwhm':np.nan,
+                           'hb_eqw':np.nan,
                            'redchi':np.nan}
 
             else: 
@@ -6467,6 +6506,26 @@ def fit_line(wav,
             flux_array_fit[k, :] = o[0]
             err_array_fit[k, :] = o[1] 
 
+        # ------------------------------------------------------------
+
+        if (save_dir is not None) & (n_samples == 1):
+        
+            wav_file = os.path.join(save_dir, 'wav.txt')
+            parfile = open(wav_file, 'wb')
+            pickle.dump(wav_array_fit.flatten(), parfile, -1)
+            parfile.close()    
+        
+            flx_file = os.path.join(save_dir, 'flx.txt')
+            parfile = open(flx_file, 'wb')
+            pickle.dump(flux_array_fit.flatten(), parfile, -1)
+            parfile.close()
+    
+            err_file = os.path.join(save_dir, 'err.txt')
+            parfile = open(err_file, 'wb')
+            pickle.dump(err_array_fit.flatten(), parfile, -1)
+            parfile.close()
+    
+
 
         # Now do fit -------------------------------------------------
 
@@ -6820,7 +6879,8 @@ def fit_line(wav,
                      fix_oiii_peak_ratio = fix_oiii_peak_ratio,
                      load_fit = load_fit,
                      xout=xout,
-                     yout=yout)
+                     yout=yout,
+                     oiii_template_version=oiii_template_version)
     
     if parallel:
         
@@ -6866,12 +6926,16 @@ if __name__ == '__main__':
 
     # t = np.genfromtxt('/home/lc585/Dropbox/IoA/nirspec/tables/shen2016_table2.txt') 
     
-    t = np.genfromtxt('/home/lc585/Dropbox/IoA/nirspec/tables/hb_absorption_composite.dat', delimiter=',') 
+    # t = np.genfromtxt('/home/lc585/Dropbox/IoA/nirspec/tables/hb_absorption_composite.dat', delimiter=',') 
 
-    wav = t[:, 0]
-    flux = t[:, 1]
-    err = t[:, 2]
+    # wav = t[:, 0]
+    # flux = t[:, 1]
+    # err = t[:, 2]
+    # dw = np.diff(wav)
+
+    wav, flux, err = np.genfromtxt('/home/lc585/thesis/code/chapter04/composite.dat', unpack=True)
     dw = np.diff(wav)
+
 
 
     out = fit_line(wav,
@@ -6889,18 +6953,18 @@ if __name__ == '__main__':
                    maskout=None,
                    verbose=True,
                    plot=True,
-                   save_dir='/data/lc585/nearIR_spectra/linefits/Asymmetric_Hb_Comp',
+                   save_dir=None,
                    plot_title='Composite',
-                   plot_savefig='figure.png',
+                   plot_savefig=None,
                    bkgd_median=False,
                    fitting_method='powell',
                    mask_negflux=False,
                    fit_model='OIII',
-                   subtract_fe=True,
+                   subtract_fe=False,
                    fe_FWHM = 4000.0*(u.km/u.s),
                    fe_FWHM_vary = True,
                    mono_lum_wav = 5100 * u.AA,
-                   hb_narrow = False,  
+                   hb_narrow = True,  
                    n_rebin = 1 ,
                    reject_outliers = False, 
                    reject_width = 21,
@@ -6909,5 +6973,7 @@ if __name__ == '__main__':
                    emission_line='OIII',
                    parallel = False,
                    cores = 8,
-                   fix_broad_peaks=True,
-                   oiii_broad_off=True)
+                   fix_broad_peaks=False,
+                   oiii_broad_off=False,
+                   oiii_template=True,
+                   oiii_template_version='highz')
