@@ -6,6 +6,9 @@ Created on Sat Aug  1 14:13:56 2015
 
 Fit emission line with model.
 
+Fix: I think my CDF calculations should be multiplied by dv 
+(Doesn't matter as long as dv=1)
+
 """
 from __future__ import division
 
@@ -3800,6 +3803,29 @@ def get_stats_oiii(out,
                             z=z,
                             w0=w0,
                             spec_norm=spec_norm)
+
+    # -----------------------------------------------------
+
+    lc = 'b'
+    if out.params['oiii_5007_b_sigma'].value < out.params['oiii_5007_n_sigma'].value:
+        # if narrow is broader than the broad 
+        lc = 'n'
+
+    mod_oiii_5007_broad = GaussianModel()
+    mod_oiii_5007_broad_pars = mod_oiii_5007_broad.make_params() 
+
+    mod_oiii_5007_broad_pars['amplitude'].value = out.params['oiii_5007_{}_amplitude'.format(lc)].value 
+    mod_oiii_5007_broad_pars['sigma'].value = out.params['oiii_5007_{}_sigma'.format(lc)].value
+    mod_oiii_5007_broad_pars['center'].value = out.params['oiii_5007_{}_center'.format(lc)].value
+
+
+    integrand_broad = lambda x: mod_oiii_5007_broad.eval(params=mod_oiii_5007_broad_pars, x=np.array(x) + wave2doppler(5008.239*u.AA, w0).value) 
+
+    oiii_5007_broad_lum = get_lum(xs*xscale, 
+                                  integrand_broad(xs), 
+                                  z=z,
+                                  w0=w0,
+                                  spec_norm=spec_norm)
             
     # absolute assymetry - not perfect because depends on somewhat arbitary
     # z_IR, but should do for now. 
@@ -4024,7 +4050,7 @@ def get_stats_oiii(out,
     # ----------------------------------------------------------------------
 
 
-    
+    print 'sfsd', fwhm
     fit_out = {'name':plot_title,
                'oiii_5007_v5':xs[np.argmin(np.abs(cdf - 0.05))],
                'oiii_5007_v10':xs[np.argmin(np.abs(cdf - 0.1))],
@@ -4035,6 +4061,7 @@ def get_stats_oiii(out,
                'oiii_5007_v95':xs[np.argmin(np.abs(cdf - 0.95))],
                'oiii_5007_eqw':oiii_5007_eqw,
                'oiii_5007_lum':np.log10(oiii_5007_lum.value),
+               'oiii_5007_broad_lum':np.log10(oiii_5007_broad_lum.value),
                'oiii_5007_snr':snr_oiii,
                'oiii_5007_fwhm':fwhm,
                'oiii_peak_ratio':out.params['oiii_peak_ratio'].value, 
@@ -4418,9 +4445,9 @@ def get_stats_ha(out=None,
 
     integrand_ha = lambda x: mod_ha.eval(params=pars_ha, x=np.array(x))
 
-    peak = xs[np.argmax(integrand_ha(xs))]*xscale
+    peak_vel = xs[np.argmax(integrand_ha(xs))]*xscale
 
-    w = doppler2wave(peak*(u.km/u.s), w0) * (1.0 + z)
+    w = doppler2wave(peak_vel*(u.km/u.s), w0) * (1.0 + z)
     peak_z = (w / w0) - 1.0    
 
   
@@ -4469,6 +4496,7 @@ def get_stats_ha(out=None,
                'narrow_lum':np.log10(narrow_lum.value) if ~np.isnan(narrow_lum.value) else np.nan,
                'narrow_voff':narrow_voff,
                'peak_z':peak_z,
+               'peak_vel':peak_vel,
                'broad_offset':broad_offset,
                'snr_line':snr_ha}
 
@@ -4657,6 +4685,7 @@ def get_stats_multigauss(out=None,
                'cen_1':broad_cens[0],
                'cen_2':broad_cens[1],
                'peak_z':peak_z,
+               'peak_vel':func_center,
                'broad_offset':broad_offset,
                'snr_line':snr_line,
                'eqw': eqw,
@@ -5093,6 +5122,7 @@ def fit3(obj,
                                  oiii_broad_off=oiii_broad_off,
                                  hb_narrow=hb_narrow)
 
+
         fit_out_hb = get_stats_hb(out=out,
                                   line_region=line_region,
                                   xscale=xscale,
@@ -5376,7 +5406,9 @@ def fit3(obj,
                 
                 print 'OIII5007 EQW: {0:.2f} A \n'.format(fit_out['oiii_5007_eqw']),\
 
-                print  colored(fit_out['name'], 'red') + ',',\
+
+
+                print  fit_out['name'] + ',',\
                        format(fit_out['oiii_5007_v5'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_v5']) else ',',\
                        format(fit_out['oiii_5007_v10'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_v10']) else ',',\
                        format(fit_out['oiii_5007_v25'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_v25']) else ',',\
@@ -5386,7 +5418,23 @@ def fit3(obj,
                        format(fit_out['oiii_5007_v95'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_v95']) else ',',\
                        format(fit_out['oiii_5007_eqw'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_eqw']) else ',',\
                        format(fit_out['oiii_5007_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_lum']) else ',',\
-                       format(fit_out['oiii_peak_ratio'], '.2f') if ~np.isnan(fit_out['oiii_peak_ratio']) else ''
+                       format(fit_out['oiii_5007_broad_lum'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_broad_lum']) else ',',\
+                       format(fit_out['oiii_5007_snr'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_snr']) else ',',\
+                       format(fit_out['oiii_5007_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_fwhm']) else ',',\
+                       format(fit_out['oiii_peak_ratio'], '.2f') + ',' if ~np.isnan(fit_out['oiii_peak_ratio']) else ',',\
+                       format(fit_out['oiii_5007_narrow_z'], '.6f') + ',' if ~np.isnan(fit_out['oiii_5007_narrow_z']) else ',',\
+                       format(fit_out['oiii_5007_full_peak_z'], '.6f') + ',' if ~np.isnan(fit_out['oiii_5007_full_peak_z']) else ',',\
+                       format(fit_out['oiii_5007_full_peak_vel'], '.2f') + ',' if ~np.isnan(fit_out['oiii_5007_full_peak_vel']) else ',',\
+                       format(fit_out['hb_snr'], '.2f') + ',' if ~np.isnan(fit_out['hb_snr']) else ',',\
+                       format(fit_out['hb_z'], '.6f') + ',' if ~np.isnan(fit_out['hb_z']) else ',',\
+                       format(fit_out['hb_broad_offset'], '.2f') + ',' if ~np.isnan(fit_out['hb_broad_offset']) else ',',\
+                       format(fit_out['hb_full_peak_vel'], '.2f') + ',' if ~np.isnan(fit_out['hb_full_peak_vel']) else ',',\
+                       format(fit_out['snr'], '.2f') + ',' if ~np.isnan(fit_out['snr']) else ',',\
+                       format(fit_out['fe_ew'], '.2f') + ',' if ~np.isnan(fit_out['fe_ew']) else ',',\
+                       format(fit_out['hb_fwhm'], '.2f') + ',' if ~np.isnan(fit_out['hb_fwhm']) else ',',\
+                       format(fit_out['hb_eqw'], '.2f') + ',' if ~np.isnan(fit_out['hb_eqw']) else ',',\
+                       format(fit_out['redchi'], '.2f') if ~np.isnan(fit_out['redchi']) else ''
+
 
                 print '\n'
                 print colored('oiii_5007_n_fwhm', 'green'),\
@@ -5409,6 +5457,8 @@ def fit3(obj,
                 print 'Reduced chi-squared: {}'.format(out.redchi) 
 
                 print 'OIII peak ratio: {}'.format(out.params['oiii_peak_ratio'].value)
+
+                print 'OIII EQW: {}'.format(fit_out['oiii_5007_eqw'])
 
         if plot:
     
@@ -5781,6 +5831,7 @@ def fit_line(wav,
                                       'narrow_lum', 
                                       'narrow_voff', 
                                       'peak_z', 
+                                      'peak_vel', 
                                       'broad_offset',
                                       'redchi', 
                                       'snr', 
@@ -5862,6 +5913,7 @@ def fit_line(wav,
                                        'oiii_5007_v95',
                                        'oiii_5007_eqw', 
                                        'oiii_5007_lum',
+                                       'oiii_5007_broad_lum',
                                        'oiii_5007_snr',
                                        'oiii_5007_fwhm',
                                        'oiii_peak_ratio',
@@ -5971,6 +6023,7 @@ def fit_line(wav,
                            'oiii_5007_v95':np.nan,
                            'oiii_5007_eqw':np.nan,
                            'oiii_5007_lum':np.nan,
+                           'oiii_5007_broad_lum':np.nan,
                            'oiii_5007_snr':np.nan,
                            'oiii_5007_fwhm':np.nan,
                            'oiii_peak_ratio':np.nan,
@@ -6002,6 +6055,7 @@ def fit_line(wav,
                            'broad_lum':np.nan,
                            'peak':np.nan, 
                            'peak_z':np.nan, 
+                           'peak_vel':np.nan, 
                            'broad_offset':np.nan,
                            'snr_line':np.nan,
                            'amplitude_1':np.nan,
@@ -6951,7 +7005,7 @@ if __name__ == '__main__':
                    nLorentzians=0,
                    line_region=[-10000,10000]*(u.km/u.s),
                    maskout=None,
-                   verbose=True,
+                   verbose=False,
                    plot=True,
                    save_dir=None,
                    plot_title='Composite',
@@ -6975,5 +7029,7 @@ if __name__ == '__main__':
                    cores = 8,
                    fix_broad_peaks=False,
                    oiii_broad_off=False,
-                   oiii_template=True,
+                   oiii_template=False,
                    oiii_template_version='highz')
+
+    print out['oiii_5007_fwhm']
